@@ -1,0 +1,9 @@
+node_modules
+.git
+ios/Pods
+*.apk
+*.aab
+*.keystore
+*.jks
+android/.gradle
+android/app/build
