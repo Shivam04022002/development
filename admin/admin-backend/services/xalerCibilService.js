@@ -50,13 +50,13 @@ function getDeep(obj, path) {
 }
 
 /**
- * Unique identifier for one unified request (doc §5.2). Xaler uses the same
- * value for client_key / request_key / partner_customer_id, and rewrites it
- * itself when TransUnion reports SSN_EXISTS (doc §6), so a fresh key per call
- * still resolves to the same consumer.
+ * One unique identifier per request. The verified request sends this SAME value
+ * in client_key, request_key and partner_customer_id — never three values.
+ * Xaler rewrites it itself when TransUnion reports SSN_EXISTS (doc §6), so a
+ * fresh id per call still resolves to the same consumer.
  */
-function newClientKey() {
-  return `tu_${crypto.randomBytes(10).toString("hex")}`;
+function generateRequestId() {
+  return `tu_${Date.now()}_${crypto.randomBytes(6).toString("hex")}`;
 }
 
 /** Split a single stored name into the documented forename / surname pair. */
@@ -67,34 +67,28 @@ function splitName(fullName) {
 }
 
 /**
- * Format a stored date of birth as the DD/MM/YYYY that Xaler expects (doc §5.2)
- * — e.g. 05/07/1975. Applications store the DOB as a full ISO timestamp, which
- * TransUnion rejects; neither an ISO timestamp nor YYYY-MM-DD may be sent.
- * The leading date part is reordered textually so no timezone shift can occur.
+ * forename / surname for the request. New applications collect the two parts
+ * separately, so use them verbatim. splitName() remains only as the fallback
+ * for legacy records that stored a single `name`.
  */
-function toXalerDate(value) {
-  if (!value) return "";
-  const raw = String(value).trim();
-  // Already DD/MM/YYYY — pass through untouched.
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
-  // ISO date or timestamp ("1975-07-05", "1975-07-05T00:00:00.000Z").
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const dd = String(parsed.getUTCDate()).padStart(2, "0");
-  const mm = String(parsed.getUTCMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${parsed.getUTCFullYear()}`;
+function resolveName(applicant = {}) {
+  if (applicant.firstName) {
+    return { forename: applicant.firstName, surname: applicant.surname || "" };
+  }
+  return splitName(applicant.name);
 }
 
 /**
- * `email` is optional (doc §5.2). The dealer app substitutes the literal "N/A"
- * when no address is given, which is not a valid address — send it as absent
- * rather than passing the placeholder through.
+ * Format a stored date of birth as the verified YYYY-MM-DD — e.g. 1975-07-05.
+ * Applications store the DOB as a full ISO timestamp; the leading date part is
+ * taken verbatim so no timezone shift can occur.
  */
-function cleanEmail(value) {
-  const email = String(value || "").trim();
-  return /^n\.?\/?a\.?$/i.test(email) ? "" : email;
+function toIsoDate(value) {
+  if (!value) return "";
+  const match = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
 }
 
 /**
@@ -111,37 +105,26 @@ function resolveApplicant(applicant) {
 }
 
 /**
- * Build the request body for the Unified endpoint, using the parameter names in
- * doc §5.2. Authentication is NOT part of the body — the API key travels in the
+ * Build the request body for the Unified endpoint. Mirrors the request verified
+ * manually in Postman EXACTLY — these eight fields and nothing else.
+ * Authentication is NOT part of the body: the API key travels in the
  * `Authorization` header.
  */
-function buildRequestBody(applicant = {}, clientKey) {
-  const { forename, surname } = splitName(applicant.name);
+function buildRequestBody(applicant = {}, requestId) {
+  const { forename, surname } = resolveName(applicant);
 
   return {
-    // ── Required identifiers (doc §5.2) ─────────────────────────────────────
-    client_key: clientKey,
-    request_key: clientKey,
-    partner_customer_id: clientKey,
+    // The one generated id, repeated in all three identifier fields.
+    client_key: requestId,
+    request_key: requestId,
+    partner_customer_id: requestId,
 
-    // ── Applicant details (doc §5.2) ────────────────────────────────────────
+    // Applicant details.
     forename,
     surname,
     pan_id: applicant.panNo || "",
-    date_of_birth: toXalerDate(applicant.dateOfBirth),
+    date_of_birth: toIsoDate(applicant.dateOfBirth),
     phone_number: applicant.mobileNumber || applicant.mobile || "",
-    email: cleanEmail(applicant.email),
-    gender: applicant.gender || "",
-    street_address: applicant.address || "",
-    city: applicant.city || "",
-    postal_code: applicant.pincode || "",
-    region: applicant.state || applicant.region || "",
-
-    // ── Documented defaults (doc §5.2) ──────────────────────────────────────
-    address_type: "01",
-    is_identity_verified: "Y",
-    legal_copy_status: "Accept",
-    user_consent: "true",
   };
 }
 
@@ -223,7 +206,7 @@ export async function fetchCibilReport(applicant, config) {
     return { ok: false, unavailable: true, reason: "CIBIL API URL not configured", attempts: 0, request: null };
   }
 
-  const requestBody = buildRequestBody(resolveApplicant(applicant), newClientKey());
+  const requestBody = buildRequestBody(resolveApplicant(applicant), generateRequestId());
   // Copy for persistence (CibilReport.rawRequest). The body carries applicant
   // details only — the API key travels in the header and is never stored.
   const sanitizedRequest = { ...requestBody };

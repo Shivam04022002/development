@@ -259,7 +259,30 @@ export default function ApplicationView() {
   // Helpers
   const applicantData = app?.applicant?.applicant || app?.applicant || null;
   const applicantPhoto = applicantData?.photo || "";
-  const applicantName = applicantData?.name || "Applicant";
+  // New records store firstName / surname alongside the composed `name`;
+  // legacy records have `name` only.
+  const fullName = (a) =>
+    a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
+  const applicantName = fullName(applicantData) || "Applicant";
+
+  // DOB is stored as an ISO date/timestamp. Show DD/MM/YYYY plus the age
+  // derived from it. The date part is read textually so no timezone shift
+  // can move the day.
+  const dobWithAge = (value) => {
+    const m = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return "— / —";
+    const [, y, mo, d] = m;
+    const birth = new Date(Number(y), Number(mo) - 1, Number(d));
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    if (
+      now.getMonth() < birth.getMonth() ||
+      (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())
+    ) {
+      age -= 1;
+    }
+    return `${d}/${mo}/${y} / ${age >= 0 && age < 150 ? age : "—"}`;
+  };
 
   const scrollTo = (ref, section) => {
     if (ref.current) {
@@ -444,12 +467,12 @@ export default function ApplicationView() {
 
               {/* RIGHT: Text details */}
               <div style={S.colStack}>
-                <FieldPair label="Name" value={applicantData?.name} />
+                <FieldPair label="Name" value={fullName(applicantData)} />
                 <FieldPair label="Mobile Number" value={applicantData?.mobileNumber || applicantData?.mobile} />
                 <FieldPair label="Email" value={applicantData?.email} />
                 <FieldPair label="Gender" value={applicantData?.gender} />
                 <FieldPair label="Father's Name" value={applicantData?.fatherName} />
-                <FieldPair label="DOB / Age" value={`${applicantData?.dateOfBirth ? applicantData.dateOfBirth.substring(0, 10) : "—"} / ${applicantData?.age || "—"}`} />
+                <FieldPair label="DOB / Age" value={dobWithAge(applicantData?.dateOfBirth)} />
 
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Back</b></div>
@@ -534,7 +557,7 @@ export default function ApplicationView() {
                 <FieldPair label="Email" value={app?.coApplicant?.email} />
                 <FieldPair label="Gender" value={app?.coApplicant?.gender} />
                 <FieldPair label="Father's Name" value={app?.coApplicant?.fatherName} />
-                <FieldPair label="DOB / Age" value={`${app?.coApplicant?.dateOfBirth ? app.coApplicant.dateOfBirth.substring(0, 10) : "—"} / ${app?.coApplicant?.age || "—"}`} />
+                <FieldPair label="DOB / Age" value={dobWithAge(app?.coApplicant?.dateOfBirth)} />
                 <FieldPair label="PAN No" value={app?.coApplicant?.panNo} />
                 <FieldPair label="Address" value={app?.coApplicant?.address} />
                 <FieldPair label="Pincode" value={app?.coApplicant?.pincode} />

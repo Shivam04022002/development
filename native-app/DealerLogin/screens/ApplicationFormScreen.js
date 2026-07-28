@@ -142,7 +142,7 @@ export default function ApplicationFormScreen({ navigation }) {
 
   const [applicantForm, setApplicantForm] = useState({
     photo: null,
-    name: '', mobile: '', email: '', gender: '', fatherName: '', dateOfBirth: null, aadharNo: '', panNo: '',
+    firstName: '', surname: '', mobile: '', email: '', gender: '', fatherName: '', dateOfBirth: null, aadharNo: '', panNo: '',
     address: '', city: '', state: '', pincode: '', policeStation: '', postOffice: '',
     aadharFront: null, aadharBack: null, panImage: null,
     coApplicantName: '',
@@ -175,7 +175,8 @@ export default function ApplicationFormScreen({ navigation }) {
   // Stable callback hooks (must be at top level)
 
   // Stable handlers for applicant fields
-  const onChangeApplicantName = useCallback((v) => updateApplicantForm('name', v), [updateApplicantForm]);
+  const onChangeApplicantFirstName = useCallback((v) => updateApplicantForm('firstName', v), [updateApplicantForm]);
+  const onChangeApplicantSurname = useCallback((v) => updateApplicantForm('surname', v), [updateApplicantForm]);
   const onChangeApplicantMobile = useCallback((v) => updateApplicantForm('mobile', v), [updateApplicantForm]);
   const onChangeApplicantEmail = useCallback((v) => updateApplicantForm('email', v), [updateApplicantForm]);
   const onChangeApplicantGender = useCallback((v) => updateApplicantForm('gender', v), [updateApplicantForm]);
@@ -282,7 +283,7 @@ export default function ApplicationFormScreen({ navigation }) {
   };
 
   const validateAndProceed = () => {
-    const applicantReq = ['photo', 'name', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'panNo', 'address', 'city', 'state', 'aadharFront', 'aadharBack', 'panImage', 'postOffice'];
+    const applicantReq = ['photo', 'firstName', 'surname', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'panNo', 'address', 'city', 'state', 'aadharFront', 'aadharBack', 'panImage', 'postOffice'];
     const coApplicantReq = ['photo', 'name', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'address', 'aadharFront', 'aadharBack', 'postOffice', 'documentType', 'relation'];
 
     let appErr = {}, coAppErr = {}, globalErr = '';
@@ -518,6 +519,9 @@ export default function ApplicationFormScreen({ navigation }) {
         applicant: {
           ...applicantUploaded,
           mobileNumber: applicantUploaded.mobile,
+          // firstName / surname are the structured values; `name` is composed
+          // from them so existing screens and records keep working unchanged.
+          name: `${applicantUploaded.firstName || ''} ${applicantUploaded.surname || ''}`.trim(),
           email: (applicantUploaded.email && applicantUploaded.email.trim()) ? applicantUploaded.email.trim() : 'N/A',
           formId: applicantFormId,
         },
@@ -594,7 +598,8 @@ export default function ApplicationFormScreen({ navigation }) {
                 <View style={styles.section}>
                   <FieldImage label="Photo (passport size)" value={applicantForm.photo}
                     onPick={onPickApplicantPhoto} err={errors.applicant.photo} />
-                  <FieldText label="Name" value={applicantForm.name} onChange={onChangeApplicantName} err={errors.applicant.name} />
+                  <FieldText label="First Name" value={applicantForm.firstName} onChange={onChangeApplicantFirstName} err={errors.applicant.firstName} />
+                  <FieldText label="Surname" value={applicantForm.surname} onChange={onChangeApplicantSurname} err={errors.applicant.surname} />
                   <FieldText label="Mobile Number" value={applicantForm.mobile} onChange={onChangeApplicantMobile} err={errors.applicant.mobile} keyboardType="numeric" maxLength={10} />
                   <FieldText label="Email (Optional)" value={applicantForm.email} onChange={onChangeApplicantEmail} err={errors.applicant.email} keyboardType="email-address" autoCapitalize="none" />
                   <View style={{ marginBottom: 12 }}>

@@ -18,6 +18,11 @@ import { API_BASE } from '../config';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { stageColor, stageLabel } from '../utils/workflowConfig';
 
+// Applicant shape differs by record age: legacy records nest the real applicant
+// one level down (applicant.applicant), newer ones store it flat. Resolve once
+// so the list reads a plain `.name`.
+const resolveApplicant = (file) => file?.applicant?.applicant || file?.applicant || {};
+
 export default function PendingFilesScreen({ navigation }) {
 
   const [user, setUser] = useState(null);
@@ -87,7 +92,7 @@ export default function PendingFilesScreen({ navigation }) {
     if (searchQuery.trim()) {
       const lowerQuery = searchQuery.toLowerCase().trim();
       result = result.filter(f => {
-        const name = (f.user?.name || f.applicant?.applicant?.name || '').toLowerCase();
+        const name = (resolveApplicant(f).name || '').toLowerCase();
         const id = (f._id || f.formId || '').toLowerCase();
         return name.includes(lowerQuery) || id.includes(lowerQuery);
       });
@@ -210,7 +215,7 @@ export default function PendingFilesScreen({ navigation }) {
                   >
                     <View style={{ flex: 2.5, paddingRight: 8, justifyContent: 'center' }}>
                       <Text style={styles.tdName} numberOfLines={2}>
-                        {file.user?.name || file.applicant?.applicant?.name || 'N/A'}
+                        {resolveApplicant(file).name || 'N/A'}
                       </Text>
                     </View>
                     <View style={{ flex: 1.5, justifyContent: 'center', alignItems: 'center' }}>

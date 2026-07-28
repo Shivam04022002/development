@@ -1,139 +1,168 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+
+/** Extensions we can render inline as an image. */
+const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp"];
+
+/** Lowercase extension of a URL, ignoring query string and hash. */
+const extOf = (url) => {
+  const clean = String(url || "").split("?")[0].split("#")[0].toLowerCase();
+  const match = clean.match(/\.([a-z0-9]+)$/);
+  return match ? match[1] : "";
+};
+
+const isPDF = (url) => extOf(url) === "pdf";
 
 /**
- * Check if a URL points to a PDF file.
+ * True when the reference should be rendered as an image. Cloudinary delivery
+ * URLs can legitimately carry no extension (f_auto), so an extensionless URL is
+ * attempted as an image and falls back to the error state if it will not load.
  */
-const isPDF = (url) => {
-  const cleanUrl = String(url || "").split("?")[0].split("#")[0].toLowerCase();
-  return cleanUrl.endsWith(".pdf");
+const isImage = (url) => {
+  const ext = extOf(url);
+  if (!ext) return true;
+  return IMAGE_EXTS.includes(ext);
 };
 
 /**
- * Derive the file-serving base URL from VITE_API_BASE_URL.
+ * API base, including the `/api` prefix (e.g. https://host/api).
+ * Locally stored files are served by GET /api/files/<relative-path>.
  */
-const getFileBaseUrl = () => {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5001/api";
-  try {
-    const apiUrl = new URL(apiBaseUrl);
-    return apiUrl.origin;
-  } catch {
-    return window.location.origin;
-  }
-};
+const getApiBaseUrl = () =>
+  String(import.meta.env.VITE_API_BASE_URL || "http://localhost:5001/api").replace(/\/+$/, "");
+
+const isCloudinaryUrl = (url) => /res\.cloudinary\.com/i.test(url);
 
 /**
- * Check if a URL is a Cloudinary URL.
- */
-const isCloudinaryUrl = (url) => {
-  return /res\.cloudinary\.com/i.test(url);
-};
-
-/**
- * For Cloudinary URLs, ensure they serve as inline images by:
- * - Adding fl_attachment:false to prevent download
- * - Adding f_auto to auto-detect format
- * - If the URL ends with a non-image extension (like .ai), replace it
+ * For Cloudinary URLs, ensure they serve as inline images by adding f_auto so
+ * the format is auto-detected, and replacing non-image extensions.
  */
 const fixCloudinaryUrl = (url) => {
   if (!isCloudinaryUrl(url)) return url;
 
   let fixed = url;
 
-  // If the URL ends with a non-image extension like .ai, .psd, etc., strip it
-  // or add f_auto to force image delivery
-  const nonImageExts = ['.ai', '.psd', '.eps', '.svg', '.tiff', '.bmp', '.raw'];
+  const nonImageExts = [".ai", ".psd", ".eps", ".svg", ".tiff", ".bmp", ".raw"];
   const urlPath = fixed.split("?")[0].toLowerCase();
-  const hasNonImageExt = nonImageExts.some(ext => urlPath.endsWith(ext));
-
-  if (hasNonImageExt) {
-    // Remove the extension and add .jpg to force image format
-    fixed = fixed.replace(/\.[a-z]+$/i, '.jpg');
+  if (nonImageExts.some((ext) => urlPath.endsWith(ext))) {
+    fixed = fixed.replace(/\.[a-z]+$/i, ".jpg");
   }
 
-  // Add Cloudinary transformations for inline display if not already present
-  if (fixed.includes('/upload/') && !fixed.includes('fl_attachment')) {
-    fixed = fixed.replace('/upload/', '/upload/f_auto,q_auto/');
+  if (fixed.includes("/upload/") && !fixed.includes("fl_attachment")) {
+    fixed = fixed.replace("/upload/", "/upload/f_auto,q_auto/");
   }
 
   return fixed;
 };
 
 /**
- * Turn any src value into a full URL.
- * - Already-absolute URLs → return as-is (with Cloudinary fixes).
- * - Relative paths → prepend the API origin.
+ * Turn any stored reference into a full URL.
+ * - Absolute URLs (legacy Cloudinary records) → returned as-is.
+ * - Relative paths ("applications/FORM-123/photo.jpg", Phase 7 local storage)
+ *   → routed through the authenticated file endpoint, /api/files/<path>.
  */
 const normalizeFileUrl = (src) => {
   if (!src) return "";
 
-  // Already a full URL
-  if (/^https?:\/\//i.test(src)) {
-    return fixCloudinaryUrl(src);
-  }
+  if (/^https?:\/\//i.test(src)) return fixCloudinaryUrl(src);
 
-  const baseUrl = getFileBaseUrl();
-  const cleanedSrc = String(src).trim();
+  const rel = String(src)
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/^(api\/)?files\//i, "")
+    .replace(/^uploads\//i, "");
 
-  if (cleanedSrc.startsWith("/")) {
-    return `${baseUrl}${cleanedSrc}`;
-  }
+  return `${getApiBaseUrl()}/files/${rel}`;
+};
 
-  return `${baseUrl}/${cleanedSrc.replace(/^\/+/, "")}`;
+/** Files served by /api/files require the admin bearer token. */
+const needsAuth = (src) => !!src && !/^https?:\/\//i.test(src);
+
+const authHeaders = () => {
+  const token = localStorage.getItem("adminToken");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 /**
- * FilePreview component — renders images inline, PDFs as clickable links,
- * and gracefully handles broken images / Cloudinary downloads.
+ * FilePreview — renders images inline, PDFs as a clickable link, and shows a
+ * sized "Preview unavailable" card (with Open File) only for unsupported types
+ * or files that genuinely fail to load.
  */
 const FilePreview = ({ src, alt, style }) => {
   const [hasError, setHasError] = useState(false);
-  const [retried, setRetried] = useState(false);
+  const [blobUrl, setBlobUrl] = useState("");
+
+  const fileUrl = normalizeFileUrl(src);
+  const authed = needsAuth(src);
+  const renderable = isImage(fileUrl);
+
+  // Locally stored images cannot be loaded by a bare <img>: the /api/files
+  // route is bearer-authenticated and an <img> sends no Authorization header.
+  // Fetch them with the token and render from an object URL instead.
+  useEffect(() => {
+    if (!src || !authed || isPDF(fileUrl) || !renderable) return undefined;
+
+    let cancelled = false;
+    let created = "";
+
+    (async () => {
+      try {
+        const res = await fetch(fileUrl, { headers: authHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (cancelled) return;
+        created = URL.createObjectURL(blob);
+        setBlobUrl(created);
+      } catch {
+        if (!cancelled) setHasError(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [src, fileUrl, authed, renderable]);
 
   if (!src) return null;
 
-  const fileUrl = normalizeFileUrl(src);
-
-  /**
-   * Open the file in a new tab. For Cloudinary URLs that download instead
-   * of displaying, open via an object URL or Google Docs viewer fallback.
-   */
+  /** Open the file in a new tab. */
   const handleClick = (e) => {
     e.preventDefault();
     e.stopPropagation();
 
     if (isPDF(fileUrl)) {
-      // For PDFs, use Google Docs viewer for reliable inline viewing
       const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
       window.open(googleViewerUrl, "_blank", "noopener,noreferrer");
       return;
     }
 
-    // For images, open directly — most image URLs display fine in a new tab
+    if (blobUrl) {
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     window.open(fileUrl, "_blank", "noopener,noreferrer");
   };
 
   /**
-   * Open image via a fetched blob URL so the browser always displays it
-   * inline instead of downloading.
+   * Open via a fetched blob URL so the browser displays the file inline
+   * instead of downloading it, sending the admin token when required.
    */
   const handleOpenAsBlob = async (e) => {
     e.preventDefault();
     e.stopPropagation();
 
     try {
-      const response = await fetch(fileUrl, { mode: "cors" });
+      const response = await fetch(fileUrl, {
+        mode: authed ? "same-origin" : "cors",
+        headers: authed ? authHeaders() : undefined,
+      });
       if (!response.ok) throw new Error("Fetch failed");
 
       const blob = await response.blob();
-      // Force image MIME type if the server returned something generic
-      const type = blob.type && blob.type.startsWith("image/")
-        ? blob.type
-        : "image/jpeg";
-      const imageBlob = new Blob([blob], { type });
-      const blobUrl = URL.createObjectURL(imageBlob);
-      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
     } catch {
-      // Fallback: just open the raw URL
       window.open(fileUrl, "_blank", "noopener,noreferrer");
     }
   };
@@ -149,23 +178,22 @@ const FilePreview = ({ src, alt, style }) => {
           alignItems: "center",
           gap: "8px",
           justifyContent: "center",
-          width: "100%",
-          height: "100%",
+          width: style?.width ?? "100%",
+          height: style?.height ?? "100%",
           padding: "10px",
         }}
         onClick={handleClick}
         title={`View ${alt} PDF in new tab`}
       >
         <span style={{ fontSize: "24px" }}>📄</span>
-        <span style={{ fontWeight: "bold", textDecoration: "underline" }}>
-          View PDF
-        </span>
+        <span style={{ fontWeight: "bold", textDecoration: "underline" }}>View PDF</span>
       </div>
     );
   }
 
-  // Broken image state — show a styled fallback with "View File" button
-  if (hasError) {
+  // Unsupported type, or an image that genuinely failed to load. Sized to the
+  // same box as the image so cards stay aligned.
+  if (hasError || !renderable) {
     return (
       <div
         style={{
@@ -174,12 +202,18 @@ const FilePreview = ({ src, alt, style }) => {
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
-          width: "100%",
-          height: "100%",
-          padding: 10,
+          boxSizing: "border-box",
+          width: style?.width ?? "100%",
+          height: style?.height ?? "100%",
+          minHeight: 60,
+          padding: 6,
+          border: "1px dashed #e5e7eb",
+          borderRadius: style?.borderRadius ?? 4,
+          background: "#f9fafb",
+          overflow: "hidden",
         }}
       >
-        <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 600 }}>
+        <span style={{ fontSize: 11, color: "#ef4444", fontWeight: 600, lineHeight: 1.2 }}>
           Preview unavailable
         </span>
         <button
@@ -189,54 +223,49 @@ const FilePreview = ({ src, alt, style }) => {
             color: "#fff",
             border: "none",
             borderRadius: 6,
-            padding: "6px 14px",
-            fontSize: 12,
+            padding: "4px 12px",
+            fontSize: 11,
             fontWeight: 700,
             cursor: "pointer",
           }}
         >
           Open File
         </button>
-        <a
-          href={fileUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={handleOpenAsBlob}
-          style={{
-            fontSize: 11,
-            color: "#6b7280",
-            textDecoration: "underline",
-            cursor: "pointer",
-          }}
-        >
-          Try Direct Link
-        </a>
       </div>
     );
   }
 
-  // Image rendering with retry logic
+  // Locally stored image: wait for the authenticated fetch to produce a blob.
+  if (authed && !blobUrl) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+          width: style?.width ?? "100%",
+          height: style?.height ?? "100%",
+          minHeight: 60,
+          borderRadius: style?.borderRadius ?? 4,
+          background: "#f3f4f6",
+          fontSize: 11,
+          color: "#9ca3af",
+        }}
+      >
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <img
-      src={fileUrl}
+      src={blobUrl || fileUrl}
       alt={alt}
       title={`Click to view ${alt} in new tab`}
       onClick={handleClick}
       style={{ ...style, cursor: "pointer" }}
-      onError={(e) => {
-        // On first error, try appending .jpg for Cloudinary or retry once
-        if (!retried && isCloudinaryUrl(fileUrl)) {
-          setRetried(true);
-          // Try with explicit .jpg format
-          const retryUrl = fileUrl.includes('f_auto')
-            ? fileUrl.replace('f_auto', 'f_jpg')
-            : fileUrl + '.jpg';
-          e.target.src = retryUrl;
-          return;
-        }
-        // After retry (or non-Cloudinary), show error state
-        setHasError(true);
-      }}
+      onError={() => setHasError(true)}
     />
   );
 };
