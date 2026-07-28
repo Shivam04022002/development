@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
 import FilePreview from "../components/FilePreview";
+import CreditNoteForm from "../components/CreditNoteForm";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import ActivityHistoryDrawer from "../components/ActivityHistoryDrawer";
 import Timeline from "../components/Timeline";
@@ -31,6 +32,7 @@ export default function ApplicationView() {
   const dealerRef = useRef(null);
   const statusRef = useRef(null);
   const workflowRef = useRef(null);
+  const creditNoteRef = useRef(null);
 
   const [activeSection, setActiveSection] = useState("Applicant");
   const [app, setApp] = useState(null);
@@ -44,6 +46,23 @@ export default function ApplicationView() {
   const [loadingWorkflow, setLoadingWorkflow] = useState(false);
   const [stageChanging, setStageChanging] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showCreditNote, setShowCreditNote] = useState(false);
+  // Bumped after a successful Credit Note so the Timeline and Credit Note
+  // summary remount and re-fetch through their own existing endpoints.
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Re-fetch the application through the existing workflow endpoint so the
+  // workflow indicator reflects the stage the backend set, with no page reload.
+  const refreshApplication = async () => {
+    try {
+      const { data } = await api.get(`/workflow/${id}`);
+      setApp(data);
+      setRefreshKey((k) => k + 1);
+      invalidatePending();
+    } catch (err) {
+      console.error("Refresh after Credit Note failed:", err?.response?.status, err?.message);
+    }
+  };
 
   // ================== Update / Approve ==================
   const handleUpdate = async () => {
@@ -265,6 +284,12 @@ export default function ApplicationView() {
     a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
   const applicantName = fullName(applicantData) || "Applicant";
 
+  // The existing endpoint accepts a Credit Note only at Pending CIBIL, so the
+  // menu item is disabled elsewhere rather than letting the user hit a 400.
+  const creditNoteAvailable = toStage(app?.workflowStage || "") === "pending_cibil";
+  const CREDIT_NOTE_UNAVAILABLE_MSG =
+    "Credit Note can only be created while the application is in Pending CIBIL.";
+
   // DOB is stored as an ISO date/timestamp. Show DD/MM/YYYY plus the age
   // derived from it. The date part is read textually so no timezone shift
   // can move the day.
@@ -301,6 +326,7 @@ export default function ApplicationView() {
       { ref: dealerRef, id: "Dealer Details" },
       { ref: statusRef, id: "Status" },
       { ref: workflowRef, id: "Workflow" },
+      { ref: creditNoteRef, id: "Credit Note" },
     ];
 
     const observer = new IntersectionObserver(
@@ -394,21 +420,34 @@ export default function ApplicationView() {
           {/* Other navigation */}
           <h2 style={{ ...S.sidebarTitle, textAlign: "center", color: "#374151" }}>Other</h2>
           <ul style={S.navList}>
-            {["Vehicle Details", "Finance Details", "Dealer Details", "Status", "Workflow"].map((item) => (
+            {["Vehicle Details", "Finance Details", "Dealer Details", "Status", "Workflow", "Credit Note"].map((item) => (
               <li
                 key={item}
+                title={item === "Credit Note" && !creditNoteAvailable ? CREDIT_NOTE_UNAVAILABLE_MSG : undefined}
                 style={{
                   ...S.navItem,
-                  color: activeSection === item ? "#2563eb" : "#374151",
+                  color:
+                    item === "Credit Note" && !creditNoteAvailable
+                      ? "#9ca3af"
+                      : activeSection === item ? "#2563eb" : "#374151",
                   fontWeight: activeSection === item ? 700 : 500,
+                  cursor: item === "Credit Note" && !creditNoteAvailable ? "not-allowed" : S.navItem.cursor,
+                  opacity: item === "Credit Note" && !creditNoteAvailable ? 0.6 : 1,
                 }}
                 onClick={() => {
+                  if (item === "Credit Note") {
+                    if (!creditNoteAvailable) return;
+                    setShowCreditNote(true);
+                    setActiveSection("Credit Note");
+                    return;
+                  }
                   const map = {
                     "Vehicle Details": vehicleRef,
                     "Finance Details": financeRef,
                     "Dealer Details": dealerRef,
                     Status: statusRef,
                     Workflow: workflowRef,
+                    "Credit Note": creditNoteRef,
                   };
                   scrollTo(map[item], item);
                 }}
@@ -686,18 +725,18 @@ export default function ApplicationView() {
             })()}
           </div>
 
-          {/* ──── Credit Note (read-only) ──── */}
-          <div style={S.section}>
+          {/* ──── Credit Note ──── */}
+          <div ref={creditNoteRef} data-id="Credit Note" style={S.section}>
             <h2 style={S.sectionHeading}>Credit Note</h2>
             <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
-            <CreditNoteSummary applicationId={app?._id} />
+            <CreditNoteSummary key={refreshKey} applicationId={app?._id} />
           </div>
 
           {/* ──── Timeline ──── */}
           <div style={S.section}>
             <h2 style={S.sectionHeading}>Timeline</h2>
             <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
-            <Timeline applicationId={app?._id} />
+            <Timeline key={refreshKey} applicationId={app?._id} />
           </div>
 
           {/* ──── Workflow ──── */}
@@ -776,6 +815,47 @@ export default function ApplicationView() {
 
         </div>
       </div>
+        {/* ──── Credit Note modal ──── */}
+        {showCreditNote && (
+          <div
+            style={S.cnOverlay}
+            onClick={() => setShowCreditNote(false)}
+          >
+            <div style={S.cnModal} onClick={(e) => e.stopPropagation()}>
+              <div style={S.cnHeader}>
+                <h2 style={S.cnTitle}>Credit Note</h2>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setShowCreditNote(false)}
+                  style={S.cnClose}
+                >
+                  ×
+                </button>
+              </div>
+              <div style={S.cnBody}>
+                {!creditNoteAvailable ? (
+                  <div style={{ color: "#B91C1C", fontWeight: 600 }}>
+                    {CREDIT_NOTE_UNAVAILABLE_MSG}
+                  </div>
+                ) : (
+                <CreditNoteForm
+                  applicationId={app?._id}
+                  formId={app?.formId}
+                  applicantName={fullName(applicantData)}
+                  applicantAddress={applicantData?.address}
+                  cibilScore={typeof app?.cibil?.score === "number" ? app.cibil.score : null}
+                  onCompleted={async () => {
+                    await refreshApplication();
+                    setShowCreditNote(false);
+                  }}
+                />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
       {showHistory && (
         <ActivityHistoryDrawer
           app={app}
@@ -980,6 +1060,44 @@ const S = {
     objectFit: "cover",
     borderRadius: 4,
   },
+  cnOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    zIndex: 1000,
+  },
+  cnModal: {
+    background: "#fff",
+    borderRadius: 12,
+    width: "100%",
+    maxWidth: 720,
+    maxHeight: "90vh",
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "0 20px 45px rgba(0,0,0,0.25)",
+  },
+  cnHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 20px",
+    borderBottom: "1px solid #e5e7eb",
+  },
+  cnTitle: { margin: 0, fontSize: 18, fontWeight: 800, color: "#0B1F4D" },
+  cnClose: {
+    background: "transparent",
+    border: "none",
+    fontSize: 26,
+    lineHeight: 1,
+    color: "#6b7280",
+    cursor: "pointer",
+    padding: "0 4px",
+  },
+  cnBody: { padding: 20, overflowY: "auto" },
   noImgText: {
     color: "#6b7280",
     fontSize: 13,

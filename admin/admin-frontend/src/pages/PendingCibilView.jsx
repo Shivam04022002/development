@@ -11,6 +11,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../services/api";
+import CreditNoteForm from "../components/CreditNoteForm";
 
 const BRAND = { blue: "#0B1F4D", orange: "#F59E0B", green: "#16A34A", red: "#EF4444" };
 
@@ -55,16 +56,6 @@ export default function PendingCibilView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Credit Note (staff-entered fields; Customer Name / Address / CIBIL prefill
-  // read-only from the Application).
-  const emptyCn = {
-    dpdDays: "", enquiryCount: "", suitFiled: "No", writeOff: "No",
-    totalOverdue: "", totalEmiAmount: "", totalEmiCount: "", distanceFromBranch: "",
-  };
-  const [cn, setCn] = useState(emptyCn);
-  const [cnSaving, setCnSaving] = useState(false);
-  const [cnMsg, setCnMsg] = useState(null);
-
   useEffect(() => {
     let active = true;
     (async () => {
@@ -80,62 +71,6 @@ export default function PendingCibilView() {
     })();
     return () => { active = false; };
   }, [id]);
-
-  // Load any previously saved Credit Note for this application.
-  useEffect(() => {
-    if (!app) return;
-    let active = true;
-    (async () => {
-      try {
-        const { data } = await API.get(`/credit-notes/${id}`);
-        const saved = data?.creditNote;
-        if (active && saved) {
-          setCn({
-            dpdDays: saved.dpdDays ?? "",
-            enquiryCount: saved.enquiryCount ?? "",
-            suitFiled: saved.suitFiled || "No",
-            writeOff: saved.writeOff || "No",
-            totalOverdue: saved.totalOverdue ?? "",
-            totalEmiAmount: saved.totalEmiAmount ?? "",
-            totalEmiCount: saved.totalEmiCount ?? "",
-            distanceFromBranch: saved.distanceFromBranch ?? "",
-          });
-        }
-      } catch { /* no saved note yet */ }
-    })();
-    return () => { active = false; };
-  }, [app, id]);
-
-  const setCnField = (name, value) => setCn((f) => ({ ...f, [name]: value }));
-
-  const handleUpdateDownload = async () => {
-    setCnSaving(true);
-    setCnMsg(null);
-    try {
-      const res = await API.post(`/credit-notes/${id}`, cn, { responseType: "blob" });
-      // Download the returned PDF.
-      const blob = new Blob([res.data], { type: "application/pdf" });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `credit-note-${app.formId || id}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      setCnMsg({ type: "success", message: "Credit Note saved. Application moved to Contact Creation." });
-      setTimeout(() => navigate("/pending-cibil"), 1400);
-    } catch (err) {
-      let message = "Failed to complete Credit Note.";
-      try {
-        const txt = await err?.response?.data?.text?.();
-        if (txt) message = JSON.parse(txt).error || message;
-      } catch { /* keep default */ }
-      setCnMsg({ type: "error", message });
-    } finally {
-      setCnSaving(false);
-    }
-  };
 
   if (loading) return <div style={{ padding: 40 }}>Loading…</div>;
   if (error) return <div style={{ padding: 40, color: BRAND.red }}>{error}</div>;
@@ -188,81 +123,14 @@ export default function PendingCibilView() {
         <div style={card}>
           <div style={heading}>Credit Note</div>
 
-          {cnMsg && (
-            <div style={{
-              marginBottom: 14, padding: "10px 14px", borderRadius: 8, color: "#fff",
-              background: cnMsg.type === "success" ? BRAND.green : BRAND.red,
-            }}>
-              {cnMsg.message}
-            </div>
-          )}
-
-          <div style={twoCol}>
-            {/* Auto-populated (read-only) */}
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Customer Name</label>
-              <input className="form-control" value={applicant.name || ""} readOnly />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>CIBIL Score</label>
-              <input className="form-control" value={hasScore ? c.score : ""} readOnly />
-            </div>
-            <div style={{ gridColumn: "1 / span 2" }}>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>House Address</label>
-              <input className="form-control" value={applicant.address || ""} readOnly />
-            </div>
-
-            {/* Editable */}
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>DPD Days</label>
-              <input type="number" className="form-control" value={cn.dpdDays} onChange={(e) => setCnField("dpdDays", e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Enquiry Count</label>
-              <input type="number" className="form-control" value={cn.enquiryCount} onChange={(e) => setCnField("enquiryCount", e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Suit Filed</label>
-              <select className="form-select" value={cn.suitFiled} onChange={(e) => setCnField("suitFiled", e.target.value)}>
-                <option value="No">No</option>
-                <option value="Yes">Yes</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Write Off</label>
-              <select className="form-select" value={cn.writeOff} onChange={(e) => setCnField("writeOff", e.target.value)}>
-                <option value="No">No</option>
-                <option value="Yes">Yes</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Total Overdue</label>
-              <input type="number" className="form-control" value={cn.totalOverdue} onChange={(e) => setCnField("totalOverdue", e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Total EMI Amount</label>
-              <input type="number" className="form-control" value={cn.totalEmiAmount} onChange={(e) => setCnField("totalEmiAmount", e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Total EMI Count</label>
-              <input type="number" className="form-control" value={cn.totalEmiCount} onChange={(e) => setCnField("totalEmiCount", e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#64748B" }}>Distance From Branch</label>
-              <input type="number" className="form-control" value={cn.distanceFromBranch} onChange={(e) => setCnField("distanceFromBranch", e.target.value)} />
-            </div>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
-            <button
-              className="btn"
-              disabled={cnSaving}
-              onClick={handleUpdateDownload}
-              style={{ background: BRAND.orange, color: "#fff", fontWeight: 700, minWidth: 190 }}
-            >
-              {cnSaving ? "Processing…" : "Update & Download"}
-            </button>
-          </div>
+          <CreditNoteForm
+            applicationId={id}
+            formId={app.formId}
+            applicantName={applicant.name}
+            applicantAddress={applicant.address}
+            cibilScore={hasScore ? c.score : null}
+            onCompleted={() => setTimeout(() => navigate("/pending-cibil"), 1400)}
+          />
         </div>
 
         {/* Applicant */}

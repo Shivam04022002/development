@@ -508,11 +508,66 @@ export const bulkCreateDealers = async (req, res) => {
 
 export const listDealers = async (req, res) => {
   try {
-    const dealers = await User.find({}, "email UserId name District Branch mobileNumber isActive createdAt")
+    // lastLoginAt / lastSeenAt were previously omitted from this projection,
+    // which is why the drawer showed "—" for Last Login / Last Active.
+    const dealers = await User.find(
+      {},
+      "email UserId name District Branch mobileNumber isActive createdAt lastLoginAt lastSeenAt"
+    )
       .sort({ createdAt: -1 })
       .lean();
-    
-    return res.json({ dealers });
+
+    // Application counts, grouped by dealer in three aggregations (not per
+    // dealer) so the endpoint stays a fixed number of queries. Pending files
+    // live in `applications`; approved and rejected are moved to their own
+    // collections by the existing workflow, so the total spans all three.
+    const [pendingAgg, approvedAgg, rejectedAgg] = await Promise.all([
+      Application.aggregate([
+        { $match: { dealer: { $ne: null } } },
+        {
+          $group: {
+            _id: "$dealer",
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+          },
+        },
+      ]),
+      ApprovedApplication.aggregate([
+        { $match: { dealer: { $ne: null } } },
+        { $group: { _id: "$dealer", count: { $sum: 1 } } },
+      ]),
+      RejectedApplication.aggregate([
+        { $match: { dealer: { $ne: null } } },
+        { $group: { _id: "$dealer", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const byId = (rows, pick) => {
+      const map = new Map();
+      rows.forEach((r) => map.set(String(r._id), pick(r)));
+      return map;
+    };
+    const appsMap = byId(pendingAgg, (r) => r);
+    const approvedMap = byId(approvedAgg, (r) => r.count);
+    const rejectedMap = byId(rejectedAgg, (r) => r.count);
+
+    const withStats = dealers.map((d) => {
+      const key = String(d._id);
+      const apps = appsMap.get(key) || { total: 0, pending: 0 };
+      const approved = approvedMap.get(key) || 0;
+      const rejected = rejectedMap.get(key) || 0;
+      return {
+        ...d,
+        // Same definition already used by getDealerLoginActivity.
+        lastActive: d.lastSeenAt || d.lastLoginAt || null,
+        totalApplications: apps.total + approved + rejected,
+        pendingApplications: apps.pending,
+        approvedApplications: approved,
+        rejectedApplications: rejected,
+      };
+    });
+
+    return res.json({ dealers: withStats });
   } catch (err) {
     console.error("listDealers:", err);
     return res.status(500).json({ message: "Server error" });
