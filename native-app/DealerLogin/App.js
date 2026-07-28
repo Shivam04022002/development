@@ -16,6 +16,7 @@ import ViewApprovedApplicationScreen from './screens/ViewApprovedApplicationScre
 import DealerProfileScreen from './screens/DealerProfileScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import ApplicationDetailsScreen from './screens/ApplicationDetailsScreen';
+import CibilStatusScreen from './screens/CibilStatusScreen';
 import { createNavigationContainerRef } from '@react-navigation/native';
 
 import Toast from 'react-native-toast-message';
@@ -253,6 +254,11 @@ export default function App() {
           <Stack.Screen name="DealerProfile" component={DealerProfileScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ headerShown: false }} />
           <Stack.Screen name="ApplicationDetails" component={ApplicationDetailsScreen} options={{ headerShown: false }} />
+          <Stack.Screen
+            name="CibilStatus"
+            component={CibilStatusScreen}
+            options={{ headerShown: false, gestureEnabled: false }}
+          />
         </Stack.Navigator>
       </NavigationContainer>
       <Toast />

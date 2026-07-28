@@ -10,7 +10,7 @@ import { decrypt } from "../utils/secretCrypto.js";
 const SETTINGS_KEY = "system";
 
 /**
- * Load the CIBIL configuration with password / clientSecret decrypted.
+ * Load the CIBIL configuration with the API key decrypted.
  * Returns null if no settings document exists yet.
  */
 export async function getDecryptedCibilConfig() {
@@ -20,10 +20,7 @@ export async function getDecryptedCibilConfig() {
   const c = doc.cibil;
   return {
     apiUrl: c.apiUrl || "",
-    username: c.username || "",
-    password: c.password ? safeDecrypt(c.password) : "",
-    clientId: c.clientId || "",
-    clientSecret: c.clientSecret ? safeDecrypt(c.clientSecret) : "",
+    apiKey: c.apiKey ? safeDecrypt(c.apiKey) : "",
     minimumScore: typeof c.minimumScore === "number" ? c.minimumScore : 650,
     autoRejectLowCibil: typeof c.autoRejectLowCibil === "boolean" ? c.autoRejectLowCibil : true,
     lowCibilRejectionReason: c.lowCibilRejectionReason || "Low CIBIL Score",
@@ -34,7 +31,7 @@ function safeDecrypt(blob) {
   try {
     return decrypt(blob);
   } catch (err) {
-    console.error("[systemSettings] Failed to decrypt a CIBIL secret:", err?.message || err);
+    console.error("[systemSettings] Failed to decrypt the CIBIL API key:", err?.message || err);
     return "";
   }
 }

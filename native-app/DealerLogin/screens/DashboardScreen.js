@@ -101,7 +101,7 @@ export default function DashboardScreen({ navigation }) {
 
   const fetchCounts = async (isActive = true) => {
     try {
-      const baseUrl = (await AsyncStorage.getItem("baseUrl")) || API_BASE;
+      const baseUrl = API_BASE;
       const token = await AsyncStorage.getItem("userToken");
       const headers = token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 

@@ -7,6 +7,7 @@
 
 // ─── Canonical stage keys (lowercase, matches DB values) ─────────────────────
 export const WORKFLOW_STAGES = [
+  'pending_cibil',
   'contact creation',
   'house visit',
   'document collection',
@@ -21,6 +22,7 @@ export const FINAL_STAGES = ['disbursed'];
 
 // ─── Human-readable display labels ───────────────────────────────────────────
 export const STAGE_LABELS = {
+  'pending_cibil':                  'Pending CIBIL',
   'contact creation':               'Contact Creation',
   'house visit':                    'House Visit',
   'document collection':            'Document Collection',
@@ -42,6 +44,7 @@ export const STAGE_ALIASES = {
 // ─── Badge colours (React Native) ────────────────────────────────────────────
 // Each entry: { bg, text, border }
 export const STAGE_COLORS = {
+  'pending_cibil':                  { bg: '#ECFEFF', text: '#0E7490', border: '#A5F3FC' },
   'contact creation':               { bg: '#F5F3FF', text: '#6D28D9', border: '#DDD6FE' },
   'house visit':                    { bg: '#EFF6FF', text: '#1D4ED8', border: '#BFDBFE' },
   'document collection':            { bg: '#FFF7ED', text: '#C2410C', border: '#FDBA74' },

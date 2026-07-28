@@ -19,15 +19,12 @@ const MASK = "";
 function sanitizeCibil(cibil = {}) {
   return {
     apiUrl: cibil.apiUrl || "",
-    username: cibil.username || "",
-    clientId: cibil.clientId || "",
     minimumScore: typeof cibil.minimumScore === "number" ? cibil.minimumScore : 650,
     autoRejectLowCibil:
       typeof cibil.autoRejectLowCibil === "boolean" ? cibil.autoRejectLowCibil : true,
     lowCibilRejectionReason: cibil.lowCibilRejectionReason || "Low CIBIL Score",
-    // Secret presence flags — value itself is never returned.
-    passwordSet: !!cibil.password,
-    clientSecretSet: !!cibil.clientSecret,
+    // Secret presence flag — the value itself is never returned.
+    apiKeySet: !!cibil.apiKey,
   };
 }
 
@@ -58,11 +55,15 @@ export const getCibilSettings = async (req, res) => {
  * PUT /api/settings/cibil
  * Updates the CIBIL configuration.
  *
- * Secret fields (password, clientSecret):
+ * Secret field (apiKey):
  *   - If a non-empty value is supplied, it is encrypted and stored.
  *   - If omitted or empty, the existing stored value is kept (so editing other
- *     fields never wipes saved secrets, and secrets are never round-tripped in
+ *     fields never wipes the saved key, and it is never round-tripped in
  *     plaintext through the browser).
+ *
+ * Validation: API URL and API Key are both required. The key counts as present
+ * when it is either supplied in this request or already stored, so saving the
+ * scoring rules alone does not force the key to be re-entered.
  */
 export const updateCibilSettings = async (req, res) => {
   try {
@@ -72,8 +73,6 @@ export const updateCibilSettings = async (req, res) => {
 
     // ── Non-secret fields ──────────────────────────────────────────────────
     if (typeof body.apiUrl === "string") current.apiUrl = body.apiUrl.trim();
-    if (typeof body.username === "string") current.username = body.username.trim();
-    if (typeof body.clientId === "string") current.clientId = body.clientId.trim();
 
     if (body.minimumScore !== undefined) {
       const n = Number(body.minimumScore);
@@ -88,16 +87,22 @@ export const updateCibilSettings = async (req, res) => {
         body.lowCibilRejectionReason.trim() || "Low CIBIL Score";
     }
 
-    // ── Secret fields — encrypt only when a new value is provided ───────────
-    if (typeof body.password === "string" && body.password !== MASK && body.password.length > 0) {
-      current.password = encrypt(body.password);
+    // ── Secret field — encrypt only when a new value is provided ────────────
+    const suppliedApiKey =
+      typeof body.apiKey === "string" && body.apiKey !== MASK ? body.apiKey.trim() : "";
+    if (suppliedApiKey.length > 0) {
+      current.apiKey = encrypt(suppliedApiKey);
     }
-    if (
-      typeof body.clientSecret === "string" &&
-      body.clientSecret !== MASK &&
-      body.clientSecret.length > 0
-    ) {
-      current.clientSecret = encrypt(body.clientSecret);
+
+    // ── Validation — both credentials are required ─────────────────────────
+    const missing = [];
+    if (!String(current.apiUrl || "").trim()) missing.push("API URL");
+    if (!current.apiKey) missing.push("API Key");
+    if (missing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} required.`,
+      });
     }
 
     doc.cibil = current;

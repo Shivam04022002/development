@@ -92,7 +92,7 @@ export default function DealerProfileScreen({ navigation }) {
   const loadUserData = async () => {
     try {
       const token = await AsyncStorage.getItem("userToken");
-      const baseUrl = (await AsyncStorage.getItem("baseUrl")) || API_BASE;
+      const baseUrl = API_BASE;
 
       if (token) {
         // Fetch from the backend API
@@ -185,7 +185,7 @@ export default function DealerProfileScreen({ navigation }) {
     setSuccessMessage("");
     try {
       const token = await AsyncStorage.getItem("userToken");
-      const baseUrl = (await AsyncStorage.getItem("baseUrl")) || API_BASE;
+      const baseUrl = API_BASE;
       const headers = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

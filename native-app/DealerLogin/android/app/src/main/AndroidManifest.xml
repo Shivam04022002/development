@@ -15,12 +15,6 @@
     </intent>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false">
-    <!-- Remove FirebaseInitProvider: crashes on launch without google-services.json.
-         Add google-services.json + restore google-services plugin to re-enable FCM push. -->
-    <provider
-      android:name="com.google.firebase.provider.FirebaseInitProvider"
-      android:authorities="${applicationId}.firebaseinitprovider"
-      tools:node="remove" />
     <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="default"/>
     <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_icon_color"/>
     <meta-data android:name="expo.modules.notifications.default_notification_color" android:resource="@color/notification_icon_color"/>
@@ -33,5 +27,6 @@
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
     </activity>
+    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="${applicationId}.firebaseinitprovider" tools:node="remove"/>
   </application>
 </manifest>

@@ -13,10 +13,7 @@ const BRAND = { blue: "#0B1F4D", orange: "#F59E0B", green: "#16A34A", red: "#EF4
 
 const emptyForm = {
   apiUrl: "",
-  username: "",
-  password: "",
-  clientId: "",
-  clientSecret: "",
+  apiKey: "",
   minimumScore: 650,
   autoRejectLowCibil: true,
   lowCibilRejectionReason: "Low CIBIL Score",
@@ -27,8 +24,8 @@ export default function CibilSettings() {
   const { admin } = useAuth();
 
   const [form, setForm] = useState(emptyForm);
-  const [passwordSet, setPasswordSet] = useState(false);
-  const [clientSecretSet, setClientSecretSet] = useState(false);
+  const [apiKeySet, setApiKeySet] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null); // { type, message }
@@ -53,17 +50,13 @@ export default function CibilSettings() {
         const c = data?.cibil || {};
         setForm({
           apiUrl: c.apiUrl || "",
-          username: c.username || "",
-          password: "",
-          clientId: c.clientId || "",
-          clientSecret: "",
+          apiKey: "",
           minimumScore: c.minimumScore ?? 650,
           autoRejectLowCibil:
             typeof c.autoRejectLowCibil === "boolean" ? c.autoRejectLowCibil : true,
           lowCibilRejectionReason: c.lowCibilRejectionReason || "Low CIBIL Score",
         });
-        setPasswordSet(!!c.passwordSet);
-        setClientSecretSet(!!c.clientSecretSet);
+        setApiKeySet(!!c.apiKeySet);
       } catch (err) {
         console.error("Failed to load CIBIL settings:", err);
         setToast({ type: "error", message: "Failed to load CIBIL settings." });
@@ -83,24 +76,21 @@ export default function CibilSettings() {
     setSaving(true);
     setToast(null);
     try {
-      // Only send secrets when the user actually typed a new value.
+      // Only send the API key when the user actually typed a new value.
       const payload = {
         apiUrl: form.apiUrl,
-        username: form.username,
-        clientId: form.clientId,
         minimumScore: Number(form.minimumScore),
         autoRejectLowCibil: !!form.autoRejectLowCibil,
         lowCibilRejectionReason: form.lowCibilRejectionReason,
       };
-      if (form.password) payload.password = form.password;
-      if (form.clientSecret) payload.clientSecret = form.clientSecret;
+      if (form.apiKey) payload.apiKey = form.apiKey;
 
       const { data } = await API.put("/settings/cibil", payload);
       const c = data?.cibil || {};
-      setPasswordSet(!!c.passwordSet);
-      setClientSecretSet(!!c.clientSecretSet);
-      // Clear secret inputs after a successful save.
-      setForm((f) => ({ ...f, password: "", clientSecret: "" }));
+      setApiKeySet(!!c.apiKeySet);
+      // Clear the secret input after a successful save.
+      setForm((f) => ({ ...f, apiKey: "" }));
+      setShowApiKey(false);
       setToast({ type: "success", message: "CIBIL settings saved." });
     } catch (err) {
       console.error("Failed to save CIBIL settings:", err);
@@ -168,61 +158,36 @@ export default function CibilSettings() {
                 <input
                   type="url"
                   className="form-control"
-                  placeholder="https://api.transunion.example/cibil"
+                  placeholder="https://xaler.in/api/transunion-cibil/fulfill-offer-advanced/"
                   value={form.apiUrl}
                   onChange={(e) => setField("apiUrl", e.target.value)}
                 />
               </div>
 
-              <div className="row">
-                <div className="col-md-6" style={{ marginBottom: 16 }}>
-                  <label style={labelStyle}>Username</label>
+              <div style={{ marginBottom: 4 }}>
+                <label style={labelStyle}>API Key</label>
+                <div style={{ display: "flex", gap: 8 }}>
                   <input
-                    type="text"
-                    className="form-control"
-                    autoComplete="off"
-                    value={form.username}
-                    onChange={(e) => setField("username", e.target.value)}
-                  />
-                </div>
-                <div className="col-md-6" style={{ marginBottom: 16 }}>
-                  <label style={labelStyle}>Password</label>
-                  <input
-                    type="password"
+                    type={showApiKey ? "text" : "password"}
                     className="form-control"
                     autoComplete="new-password"
-                    placeholder={passwordSet ? "•••••••• (saved — leave blank to keep)" : "Enter password"}
-                    value={form.password}
-                    onChange={(e) => setField("password", e.target.value)}
+                    placeholder={apiKeySet ? "•••••••• (saved — leave blank to keep)" : "Enter API key"}
+                    value={form.apiKey}
+                    onChange={(e) => setField("apiKey", e.target.value)}
                   />
-                </div>
-              </div>
-
-              <div className="row">
-                <div className="col-md-6" style={{ marginBottom: 16 }}>
-                  <label style={labelStyle}>Client ID</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    autoComplete="off"
-                    value={form.clientId}
-                    onChange={(e) => setField("clientId", e.target.value)}
-                  />
-                </div>
-                <div className="col-md-6" style={{ marginBottom: 4 }}>
-                  <label style={labelStyle}>Client Secret</label>
-                  <input
-                    type="password"
-                    className="form-control"
-                    autoComplete="new-password"
-                    placeholder={clientSecretSet ? "•••••••• (saved — leave blank to keep)" : "Enter client secret"}
-                    value={form.clientSecret}
-                    onChange={(e) => setField("clientSecret", e.target.value)}
-                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    style={{ whiteSpace: "nowrap", minWidth: 72 }}
+                    onClick={() => setShowApiKey((v) => !v)}
+                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                  >
+                    {showApiKey ? "Hide" : "Show"}
+                  </button>
                 </div>
               </div>
               <p style={{ color: "#9CA3AF", fontSize: 13, margin: "10px 0 0" }}>
-                Password and Client Secret are encrypted at rest and never displayed again.
+                The API Key is encrypted at rest and never displayed again after saving.
               </p>
             </div>
 

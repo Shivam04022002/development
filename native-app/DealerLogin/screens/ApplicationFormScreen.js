@@ -6,8 +6,6 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import Toast from 'react-native-toast-message';
-import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearSession } from '../utils/SecureStorage';
 import { Picker } from '@react-native-picker/picker';
@@ -145,7 +143,7 @@ export default function ApplicationFormScreen({ navigation }) {
   const [applicantForm, setApplicantForm] = useState({
     photo: null,
     name: '', mobile: '', email: '', gender: '', fatherName: '', dateOfBirth: null, aadharNo: '', panNo: '',
-    address: '', pincode: '', policeStation: '', postOffice: '',
+    address: '', city: '', state: '', pincode: '', policeStation: '', postOffice: '',
     aadharFront: null, aadharBack: null, panImage: null,
     coApplicantName: '',
   });
@@ -185,6 +183,8 @@ export default function ApplicationFormScreen({ navigation }) {
   const onChangeApplicantAadhar = useCallback((v) => updateApplicantForm('aadharNo', formatAadhaar(v)), [updateApplicantForm]);
   const onChangeApplicantPAN = useCallback((v) => updateApplicantForm('panNo', formatPAN(v)), [updateApplicantForm]);
   const onChangeApplicantAddress = useCallback((v) => updateApplicantForm('address', v), [updateApplicantForm]);
+  const onChangeApplicantCity = useCallback((v) => updateApplicantForm('city', v), [updateApplicantForm]);
+  const onChangeApplicantState = useCallback((v) => updateApplicantForm('state', v), [updateApplicantForm]);
   const onChangeApplicantPincode = useCallback((v) => updateApplicantForm('pincode', v), [updateApplicantForm]);
   const onChangeApplicantPoliceStation = useCallback((v) => updateApplicantForm('policeStation', v), [updateApplicantForm]);
   const onChangeApplicantPostOffice = useCallback((v) => updateApplicantForm('postOffice', v), [updateApplicantForm]);
@@ -282,7 +282,7 @@ export default function ApplicationFormScreen({ navigation }) {
   };
 
   const validateAndProceed = () => {
-    const applicantReq = ['photo', 'name', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'panNo', 'address', 'aadharFront', 'aadharBack', 'panImage', 'postOffice'];
+    const applicantReq = ['photo', 'name', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'panNo', 'address', 'city', 'state', 'aadharFront', 'aadharBack', 'panImage', 'postOffice'];
     const coApplicantReq = ['photo', 'name', 'mobile', 'gender', 'fatherName', 'dateOfBirth', 'aadharNo', 'address', 'aadharFront', 'aadharBack', 'postOffice', 'documentType', 'relation'];
 
     let appErr = {}, coAppErr = {}, globalErr = '';
@@ -548,31 +548,12 @@ export default function ApplicationFormScreen({ navigation }) {
       console.log('  coApplicant.aadharBack:', typeof payload.coApplicant.aadharBack, payload.coApplicant.aadharBack ? payload.coApplicant.aadharBack.substring(0, 60) : 'EMPTY');
       console.log('  vehicleDetails.vehiclePhoto:', typeof payload.vehicleDetails.vehiclePhoto, payload.vehicleDetails.vehiclePhoto ? payload.vehicleDetails.vehiclePhoto.substring(0, 60) : 'EMPTY');
 
-      const res = await axios.post(
-        `${API_BASE}/api/applications/submit`,
-        payload,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-            "User-Agent": "Mozilla/5.0 (Mobile; React Native)"
-          },
-          timeout: 20000, // JSON submit should be fast now
-        }
-      );
-
-      if (res.status === 200 || res.status === 201) {
-        Toast.show({
-          type: 'success',
-          position: 'top',
-          topOffset: 80,
-          text1: 'Success',
-          text2: 'Application submitted successfully! ✅',
-        });
-        navigation.navigate('Dashboard');
-      } else {
-        throw new Error('Failed to submit application to server.');
-      }
+      // ── Hand off to the CIBIL status screen ──
+      // It performs POST /api/applications/submit (same endpoint, same payload)
+      // so the dealer watches the CIBIL meter while the check runs, then sees
+      // the outcome the backend returned instead of dropping straight back.
+      setShowVehicleDialog(false);
+      navigation.replace('CibilStatus', { payload, formId: applicantFormId });
     } catch (err) {
       console.error('❌ Error:', err?.message);
       
@@ -648,6 +629,8 @@ export default function ApplicationFormScreen({ navigation }) {
                     autoCapitalize="characters"
                   />
                   <FieldText label="Address" value={applicantForm.address} onChange={onChangeApplicantAddress} err={errors.applicant.address} multiline />
+                  <FieldText label="City" value={applicantForm.city} onChange={onChangeApplicantCity} err={errors.applicant.city} />
+                  <FieldText label="State" value={applicantForm.state} onChange={onChangeApplicantState} err={errors.applicant.state} />
                   <FieldText label="Pincode" value={applicantForm.pincode} onChange={onChangeApplicantPincode} err={errors.applicant.pincode} keyboardType="numeric" />
                   <FieldText label="Nearby Police Station" value={applicantForm.policeStation} onChange={onChangeApplicantPoliceStation} err={errors.applicant.policeStation} />
                   <FieldDocument label="Aadhaar Card (Front)"

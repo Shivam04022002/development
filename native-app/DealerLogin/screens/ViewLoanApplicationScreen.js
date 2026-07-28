@@ -6,6 +6,7 @@ import { clearSession } from '../utils/SecureStorage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_BASE } from '../config';
 import { WORKFLOW_STAGES, stageLabel, stageIndex } from '../utils/workflowConfig';
+import CibilMeter, { cibilColor, hasCibilScore } from '../components/CibilMeter';
 
 // ✅ Render Step Circle with Completed, Current, and Pending States
 function renderStepCircle(idx, currentStep) {
@@ -103,6 +104,19 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
   // ✅ Calculate current step dynamically using shared config
   const currentStep = stageIndex(application.workflowStage) + 1 || 1;
 
+  // Applicant shape differs by record age: legacy records embed the real
+  // applicant one level down (application.applicant.applicant), newer ones
+  // store it flat. Resolve once here so the JSX below reads plain fields.
+  const applicant = application.applicant?.applicant || application.applicant || {};
+
+  // CIBIL summary as already returned by the existing response. No refetch.
+  const cibil = application.cibil || {};
+  const cibilScore = hasCibilScore(cibil.score) ? cibil.score : null;
+  const cibilProcessing =
+    cibilScore === null && String(cibil.state || '').toLowerCase() === 'pending';
+  const cibilRating =
+    cibilScore === null ? '' : cibilScore >= 750 ? 'EXCELLENT' : cibilScore >= 650 ? 'GOOD' : 'LOW';
+
   const chunkArray = (arr, size) => {
     const result = [];
     for (let i = 0; i < arr.length; i += size) {
@@ -128,7 +142,7 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
           <Text style={styles.useridRow}>
             <Text style={{ color: '#222' }}>Form ID: <Text style={{ fontWeight: 'bold' }}>{application.formId}</Text></Text>
             <Text> | </Text>
-            <Text style={{ color: '#222' }}>Name: <Text style={{ fontWeight: 'bold' }}>{application.applicant.applicant.name}</Text></Text>
+            <Text style={{ color: '#222' }}>Name: <Text style={{ fontWeight: 'bold' }}>{applicant.name}</Text></Text>
           </Text>
 
           <Text style={styles.progressLabel}>Application Progress</Text>
@@ -146,6 +160,21 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
                 )}
               </View>
             ))}
+          </View>
+
+          {/* CIBIL Meter — reads the cibil summary already present on the
+              loaded application; no extra request is made. */}
+          <View style={styles.cibilCard}>
+            <Text style={styles.cibilTitle}>CIBIL Score</Text>
+            <CibilMeter score={cibilScore} processing={cibilProcessing} size={210} />
+            <Text
+              style={[
+                styles.cibilRating,
+                { color: cibilRating ? cibilColor(cibilScore) : '#94A3B8' },
+              ]}
+            >
+              {cibilRating || (cibilProcessing ? 'Fetching CIBIL...' : 'CIBIL Not Available')}
+            </Text>
           </View>
 
           {/* Status Box */}
@@ -179,19 +208,19 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
                 <Text style={styles.sectionTitle}>Personal Details</Text>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Full Name</Text>
-                  <Text style={styles.detailValue}>{application.applicant.applicant.name}</Text>
+                  <Text style={styles.detailValue}>{applicant.name}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Father's Name</Text>
-                  <Text style={styles.detailValue}>{application.applicant.applicant.fatherName}</Text>
+                  <Text style={styles.detailValue}>{applicant.fatherName}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>DOB</Text>
-                  <Text style={styles.detailValue}>{new Date(application.applicant.applicant.dateOfBirth).toLocaleDateString()}</Text>
+                  <Text style={styles.detailValue}>{new Date(applicant.dateOfBirth).toLocaleDateString()}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Aadhar No</Text>
-                  <Text style={styles.detailValue}>{application.applicant.applicant.aadharNo}</Text>
+                  <Text style={styles.detailValue}>{applicant.aadharNo}</Text>
                 </View>
               </>
             ) : (
@@ -203,19 +232,19 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Vehicle</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails.brandName} {application.vehicleDetails.modelName}</Text>
+                  <Text style={styles.detailValue}>{application.vehicleDetails?.brandName} {application.vehicleDetails?.modelName}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Price</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails.priceOfVehicle}</Text>
+                  <Text style={styles.detailValue}>{application.vehicleDetails?.priceOfVehicle}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Finance Required</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails.financeRequired}</Text>
+                  <Text style={styles.detailValue}>{application.vehicleDetails?.financeRequired}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Tenure</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails.tenure} months</Text>
+                  <Text style={styles.detailValue}>{application.vehicleDetails?.tenure} months</Text>
                 </View>
               </>
             )}
@@ -243,6 +272,9 @@ const styles = StyleSheet.create({
   stepDone: { backgroundColor: '#16C172', borderColor: '#16C172' },
   stepCurrent: { backgroundColor: '#fff', borderColor: '#16C172' },
   stepPending: { backgroundColor: '#fff', borderColor: '#BDBDBD' },
+  cibilCard: { backgroundColor: '#fff', marginHorizontal: 14, marginTop: 4, marginBottom: 6, borderRadius: 9, paddingVertical: 16, paddingHorizontal: 16, alignItems: 'center', elevation: 1, borderWidth: 1, borderColor: '#E0E0E0', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
+  cibilTitle: { fontWeight: 'bold', color: '#222', fontSize: 17, marginBottom: 11, textAlign: 'center' },
+  cibilRating: { marginTop: 10, fontSize: 15, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
   statusBox: { backgroundColor: '#F8F8F8', borderRadius: 8, padding: 0, marginHorizontal: 18, marginTop: 10, marginBottom: 14, elevation: 1 },
   statusText: { fontSize: 15, color: '#111', fontWeight: 'bold', paddingVertical: 10 },
   tabRow: { flexDirection: 'row', backgroundColor: '#EEE', marginHorizontal: 15, borderRadius: 7, marginBottom: 0, overflow: 'hidden', marginTop: 4 },
