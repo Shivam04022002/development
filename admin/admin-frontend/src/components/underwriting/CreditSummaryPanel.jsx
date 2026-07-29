@@ -1,36 +1,35 @@
 import React from "react";
-import { show, money, scoreBand } from "../cibil/format";
+import { show, money, scoreBand, NA } from "../cibil/format";
 
-/** Bureau summary, reusing the CIBIL score banding. */
+/**
+ * Bureau summary — simple counts and totals only. No thresholds are applied to
+ * drive a decision; the score colour reuses the existing CIBIL display palette
+ * purely for readability.
+ */
 export default function CreditSummaryPanel({ summary }) {
   const band = scoreBand(summary.score);
   const rows = [
-    ["Total Accounts", show(summary.totalAccounts)],
-    ["Active Accounts", show(summary.activeAccounts)],
-    ["Closed Accounts", show(summary.closedAccounts)],
-    ["Current Balance", money(summary.currentBalance)],
-    ["High Credit", money(summary.highCredit)],
-    ["Total Overdue", money(summary.totalOverdue)],
-    ["Total EMI Amount", money(summary.totalEmiAmount)],
-    ["Total EMI Count", show(summary.totalEmiCount)],
-    ["Recent Enquiries", show(summary.recentEnquiries)],
-    ["DPD (Last 6 Months)", summary.dpdDays === null ? "-" : `${summary.dpdDays} day(s)`],
-    ["Credit Utilisation", summary.utilisation === null ? "-" : `${summary.utilisation}%`],
-    ["Credit Age", summary.creditAgeYears === null ? "-" : `${summary.creditAgeYears} year(s)`],
+    ["Total Accounts", show(summary.totalAccounts, NA)],
+    ["Active Accounts", show(summary.activeAccounts, NA)],
+    ["Closed Accounts", show(summary.closedAccounts, NA)],
+    ["Current Balance", money(summary.currentBalance, NA)],
+    ["High Credit", money(summary.highCredit, NA)],
+    ["Total Overdue", money(summary.totalOverdue, NA)],
+    ["Recent Enquiries (12 months)", show(summary.recentEnquiries, NA)],
+    ["Total Enquiries", show(summary.totalEnquiries, NA)],
   ];
   return (
     <section className="cr-section">
       <h2 className="cr-h2">Credit Summary</h2>
       {!summary.hasBureauData && (
-        <p className="cr-empty">No bureau report on file; figures below come from the credit note only.</p>
+        <p className="cr-empty">No bureau report on file for this application.</p>
       )}
       <div className="uw-score-row">
         <div className="uw-score-box">
           <div className="cr-score-name">CIBIL Score</div>
           <div className="cr-score-value" style={{ color: band.color }}>
-            {summary.score === null ? "-" : summary.score}
+            {summary.score === null ? NA : summary.score}
           </div>
-          <div className="cr-score-band" style={{ color: band.color }}>{show(summary.scoreBand, band.label)}</div>
         </div>
         <table className="cr-table uw-summary-table">
           <tbody>

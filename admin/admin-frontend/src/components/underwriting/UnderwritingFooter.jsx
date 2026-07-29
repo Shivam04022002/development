@@ -8,12 +8,12 @@ export default function UnderwritingFooter({ header, application }) {
       <div className="cr-end">End of credit underwriting decision report</div>
       <h3 className="cr-h3">Disclaimer</h3>
       <p className="cr-disclaimer">
-        This report is prepared by {header.companyName} for internal credit assessment.
-        It combines information supplied by the applicant and the dealer with credit
-        bureau data retrieved at the time of the enquiry. Values shown as &quot;-&quot;
-        or &quot;Not Available&quot; were not recorded against this application. The
-        recommended decision is advisory and derived from the checks shown above; the
-        final decision rests with the approving authority in the matrix.
+        This report is prepared by {header.companyName} for internal record. It sets
+        out information supplied by the applicant and the dealer together with credit
+        bureau data retrieved at the time of the enquiry, and the decision recorded
+        against the application. Values shown as &quot;Not Available&quot; were not
+        recorded in the system. The report states existing information only; it does
+        not assess risk or make a lending recommendation.
       </p>
       <div className="cr-footer-meta">
         <span>{header.companyName} &middot; {header.address}</span>

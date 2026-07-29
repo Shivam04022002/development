@@ -1,89 +1,42 @@
 /* Credit Underwriting Decision Report — additive only.
-   Typography, tables, spacing, cards and print rules are inherited from
-   cibilReport.css; this file adds the underwriting-specific pieces so the two
-   reports read as one suite. */
-
-.uw-report { --uw-good: #16a34a; --uw-warn: #f59e0b; --uw-bad: #ef4444; }
+   Typography, tables, spacing, cards, footer and print rules are inherited
+   from cibilReport.css; this file adds only what the decision sheet needs. */
 
 /* ── Header / title ─────────────────────────────────────────────────────── */
-.uw-tagline { font-size: 10px; font-weight: 700; color: var(--uw-warn);
+.uw-tagline { font-size: 10px; font-weight: 700; color: #f59e0b;
   letter-spacing: 1.5px; text-transform: uppercase; }
 .uw-title { font-size: 16px; font-weight: 800; text-align: center; letter-spacing: 1px;
   color: var(--cr-head); text-transform: uppercase; margin: 4px 0 14px;
-  padding-bottom: 8px; border-bottom: 2px solid var(--uw-warn); }
+  padding-bottom: 8px; border-bottom: 2px solid #f59e0b; }
 
-/* ── Decision banner ────────────────────────────────────────────────────── */
-.uw-decision { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; break-inside: avoid; }
-.uw-decision-main { padding: 12px 14px; border-radius: 6px; border-left: 6px solid; }
+/* ── Decision (stored value, not calculated) ────────────────────────────── */
+.uw-decision-main { padding: 12px 14px; border-radius: 6px; border-left: 6px solid;
+  margin-bottom: 10px; break-inside: avoid; }
 .uw-decision-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
   color: var(--cr-muted); font-weight: 700; }
-.uw-decision-value { font-size: 24px; font-weight: 800; line-height: 1.2; margin: 2px 0 4px; }
-.uw-decision-reason { font-size: 11px; color: #334155; }
-.uw-dec-approved { background: #f0fdf4; border-color: var(--uw-good); }
-.uw-dec-approved .uw-decision-value { color: var(--uw-good); }
-.uw-dec-conditional { background: #fffbeb; border-color: var(--uw-warn); }
-.uw-dec-conditional .uw-decision-value { color: #b45309; }
-.uw-dec-rejected { background: #fef2f2; border-color: var(--uw-bad); }
-.uw-dec-rejected .uw-decision-value { color: var(--uw-bad); }
+.uw-decision-value { font-size: 24px; font-weight: 800; line-height: 1.2; margin-top: 2px; }
+.uw-dec-approved { background: #f0fdf4; border-color: #16a34a; }
+.uw-dec-approved .uw-decision-value { color: #16a34a; }
+.uw-dec-rejected { background: #fef2f2; border-color: #ef4444; }
+.uw-dec-rejected .uw-decision-value { color: #ef4444; }
 .uw-dec-pending { background: #f8fafc; border-color: #94a3b8; }
 .uw-dec-pending .uw-decision-value { color: #475569; }
 
-.uw-grade-box { border: 1px solid var(--cr-line); border-radius: 6px; padding: 10px;
-  text-align: center; display: flex; flex-direction: column; justify-content: center; }
-.uw-grade { font-size: 34px; font-weight: 800; line-height: 1.1; }
-.uw-grade-a { color: var(--uw-good); }
-.uw-grade-b { color: #0891b2; }
-.uw-grade-c { color: var(--uw-warn); }
-.uw-grade-d { color: var(--uw-bad); }
-.uw-grade-x { color: #94a3b8; }
-.uw-grade-label { font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .6px; color: var(--cr-muted); }
-.uw-current { font-size: 10px; color: var(--cr-muted); margin-top: 6px; }
-
 /* ── Credit summary ─────────────────────────────────────────────────────── */
-.uw-score-row { display: grid; grid-template-columns: 180px 1fr; gap: 16px; align-items: start; }
-.uw-score-box { border: 1px solid var(--cr-line); border-radius: 6px; padding: 10px; text-align: center; }
+.uw-score-row { display: grid; grid-template-columns: 180px 1fr; gap: 16px;
+  align-items: start; break-inside: avoid; }
+.uw-score-box { border: 1px solid var(--cr-line); border-radius: 6px; padding: 10px;
+  text-align: center; }
 .uw-summary-table th { text-align: left; font-weight: 500; color: var(--cr-muted); }
 
-/* ── Risk badges ────────────────────────────────────────────────────────── */
-.uw-badge { display: inline-block; min-width: 66px; text-align: center; padding: 2px 8px;
-  border-radius: 10px; font-size: 10px; font-weight: 800; letter-spacing: .5px; }
-.uw-pass { background: #dcfce7; color: #166534; }
-.uw-warn { background: #fef3c7; color: #92400e; }
-.uw-fail { background: #fee2e2; color: #991b1b; }
-.uw-na   { background: #f1f5f9; color: #64748b; }
-
-/* ── Analysis ───────────────────────────────────────────────────────────── */
-.uw-analysis-col { border-left: 3px solid var(--cr-line); padding-left: 10px; break-inside: avoid; }
-.uw-tone-good { border-left-color: var(--uw-good); }
-.uw-tone-bad { border-left-color: var(--uw-bad); }
-.uw-tone-neutral { border-left-color: #94a3b8; }
-.uw-list { margin: 4px 0 8px 16px; padding: 0; font-size: 11px; }
-.uw-list li { margin-bottom: 3px; }
-.uw-remarks { border: 1px solid var(--cr-line); border-radius: 4px; min-height: 60px;
+/* ── Remarks ────────────────────────────────────────────────────────────── */
+.uw-remark-block { break-inside: avoid; margin-bottom: 10px; }
+.uw-remarks { border: 1px solid var(--cr-line); border-radius: 4px; min-height: 54px;
   padding: 8px; font-size: 11px; background: #fcfcfd; }
-
-/* ── Approval matrix ────────────────────────────────────────────────────── */
-.uw-matrix td { height: 30px; }
-.uw-matrix .uw-sign { min-width: 110px; border-bottom: 1px solid var(--cr-line); }
-
-/* ── Documents checklist ────────────────────────────────────────────────── */
-.uw-doc-grid { list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px 14px; font-size: 11px; }
-.uw-doc-grid li { display: flex; align-items: center; gap: 7px; }
-.uw-box { display: inline-block; width: 13px; height: 13px; border: 1.4px solid #94a3b8;
-  border-radius: 2px; text-align: center; line-height: 11px; font-size: 10px;
-  font-weight: 800; color: transparent; }
-.uw-box-on { border-color: var(--uw-good); background: #dcfce7; color: #166534; }
-
-.uw-note { font-size: 10px; color: var(--cr-muted); font-style: italic; margin-top: 6px; }
+.uw-note { font-size: 10px; color: var(--cr-muted); font-style: italic; margin-top: 4px; }
 
 /* ── Print ──────────────────────────────────────────────────────────────── */
 @media print {
-  .uw-decision, .uw-grade-box, .uw-analysis-col, .uw-matrix tr,
-  .uw-doc-grid, .uw-score-row, .uw-remarks { break-inside: avoid; }
-  .uw-badge, .uw-decision-main, .uw-box-on, .uw-grade {
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-  }
-  .uw-matrix thead { display: table-header-group; }
+  .uw-decision-main, .uw-score-row, .uw-remark-block, .uw-remarks { break-inside: avoid; }
+  .uw-decision-main { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
