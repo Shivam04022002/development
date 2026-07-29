@@ -1,6 +1,6 @@
 // controllers/creditNoteController.js
 //
-// Phase 5B — Credit Note module. Taken during the Contact Creation stage.
+// Phase 5B — Credit Note module. The final step of the Pending CIBIL stage.
 // Only staff with the "pending_cibil" permission (or superadmin) may complete it.
 //
 import CreditNote from "../models/CreditNote.js";
@@ -55,10 +55,9 @@ export const getCreditNote = async (req, res) => {
 
 /**
  * POST /api/credit-notes/:applicationId  (Update & Download)
- * Saves the Credit Note, generates + stores the PDF, records history and
- * returns the PDF for download. Taken during Contact Creation; it does NOT
- * change the workflowStage — advancing to House Visit remains the job of the
- * existing Contact Creation process.
+ * Saves the Credit Note, generates + stores the PDF, advances the workflowStage
+ * pending_cibil → contact creation (status stays "pending"), records history,
+ * and returns the PDF for download.
  */
 export const completeCreditNote = async (req, res) => {
   try {
@@ -69,10 +68,8 @@ export const completeCreditNote = async (req, res) => {
     const app = await Application.findById(req.params.applicationId);
     if (!app) return res.status(404).json({ error: "Application not found" });
 
-    // Applications no longer rest at Pending CIBIL, so the Credit Note is now
-    // taken during Contact Creation. The permission check above is unchanged.
-    if (app.workflowStage !== CONTACT_CREATION_STAGE) {
-      return res.status(400).json({ error: "Application is not at the Contact Creation stage" });
+    if (app.workflowStage !== PENDING_CIBIL_STAGE) {
+      return res.status(400).json({ error: "Application is not at the Pending CIBIL stage" });
     }
 
     const applicant = applicantOf(app.toObject());
@@ -130,15 +127,17 @@ export const completeCreditNote = async (req, res) => {
     const pdfRel = await writeAppFile(app.formId || String(app._id), "credit-note.pdf", pdfBuffer);
     await CreditNote.updateOne({ _id: creditNote._id }, { $set: { pdfPath: pdfRel } });
 
-    // 5) No stage change: the application is already at Contact Creation and
-    //    advancing to House Visit stays with the existing Contact Creation
-    //    process. Recorded as a note so no duplicate transition entry appears.
+    // 5) Advance workflowStage pending_cibil → contact creation (status stays pending).
+    app.workflowStage = CONTACT_CREATION_STAGE;
+    await app.save();
+
+    // 6) Application History — Credit Note Completed (performedBy = current staff).
     await createHistoryEntry({
       applicationId: app._id,
       formId: app.formId,
-      actionType: "NOTE_ADDED",
-      oldValue: null,
-      newValue: null,
+      actionType: "STAGE_CHANGED",
+      oldValue: PENDING_CIBIL_STAGE,
+      newValue: CONTACT_CREATION_STAGE,
       remarks: "Credit Note Completed",
       updatedBy: staffName,
       updatedByEmail: req.admin?.email || "",
@@ -147,6 +146,7 @@ export const completeCreditNote = async (req, res) => {
     });
 
     logEvent("credit_note_completed", { applicationId: String(app._id), formId: app.formId, by: staffName });
+    logEvent("workflow_changed", { applicationId: String(app._id), formId: app.formId, from: PENDING_CIBIL_STAGE, to: CONTACT_CREATION_STAGE, by: staffName });
 
     // 4) Download the PDF.
     res.setHeader("Content-Type", "application/pdf");

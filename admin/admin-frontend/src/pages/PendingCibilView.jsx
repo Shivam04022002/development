@@ -11,6 +11,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../services/api";
+import CreditNoteForm from "../components/CreditNoteForm";
 
 const BRAND = { blue: "#0B1F4D", orange: "#F59E0B", green: "#16A34A", red: "#EF4444" };
 
@@ -116,6 +117,20 @@ export default function PendingCibilView() {
             <Field label="Report Date" value={fmtDate(c.reportDate)} />
             <Field label="Request ID" value={c.requestId || "—"} />
           </div>
+        </div>
+
+        {/* Credit Note — final step of Pending CIBIL (below the CIBIL meter) */}
+        <div style={card}>
+          <div style={heading}>Credit Note</div>
+
+          <CreditNoteForm
+            applicationId={id}
+            formId={app.formId}
+            applicantName={applicant.name}
+            applicantAddress={applicant.address}
+            cibilScore={hasScore ? c.score : null}
+            onCompleted={() => setTimeout(() => navigate("/pending-cibil"), 1400)}
+          />
         </div>
 
         {/* Applicant */}

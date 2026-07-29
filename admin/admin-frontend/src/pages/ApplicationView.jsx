@@ -345,11 +345,11 @@ export default function ApplicationView() {
     a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
   const applicantName = fullName(applicantData) || "Applicant";
 
-  // The endpoint accepts a Credit Note only at Contact Creation, so the menu
-  // item is disabled elsewhere rather than letting the user hit a 400.
-  const creditNoteAvailable = toStage(app?.workflowStage || "") === "contact creation";
+  // The existing endpoint accepts a Credit Note only at Pending CIBIL, so the
+  // menu item is disabled elsewhere rather than letting the user hit a 400.
+  const creditNoteAvailable = toStage(app?.workflowStage || "") === "pending_cibil";
   const CREDIT_NOTE_UNAVAILABLE_MSG =
-    "Credit Note can only be created while the application is in Contact Creation.";
+    "Credit Note can only be created while the application is in Pending CIBIL.";
 
   // DOB is stored as an ISO date/timestamp. Show DD/MM/YYYY plus the age
   // derived from it. The date part is read textually so no timezone shift

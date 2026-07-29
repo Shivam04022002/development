@@ -24,7 +24,7 @@ import { createHistoryEntry } from "../controllers/formTrackingController.js";
 import CibilReport from "../models/CibilReport.js";
 import Application from "../models/Application.js";
 import RejectedApplication from "../models/RejectedApplication.js";
-import { PENDING_CIBIL_STAGE, getNextStage } from "../utils/workflowConstants.js";
+import { PENDING_CIBIL_STAGE } from "../utils/workflowConstants.js";
 import { decideByScore } from "../utils/cibilRanges.js";
 import { writeAppFile } from "../utils/fileStorage.js";
 import { logEvent } from "../utils/log.js";
@@ -114,12 +114,11 @@ export async function processApplicationCibil(appDoc) {
     };
 
     // ── Decision bands, configured in Admin → CIBIL Settings ───────────────
-    // Pending CIBIL is only a holding state while the vendor response is
-    // outstanding. Once a valid score exists the application always leaves it:
-    // to Rejected, or into Pending Files at the first workflow stage. No
-    // threshold and no stage name is hardcoded here.
+    // The bands themselves stay fully configurable; only the reject band moves
+    // the application. Everything else remains at Pending CIBIL until the
+    // Credit Note is completed, which is what advances it to Contact Creation.
+    // No threshold is hardcoded here.
     const decision = decideByScore(ex.score, config);
-    const pendingFilesStage = getNextStage(PENDING_CIBIL_STAGE);
 
     // No usable score (null / unparseable): stay in Pending CIBIL and wait.
     if (decision.matched === null) {
@@ -139,7 +138,7 @@ export async function processApplicationCibil(appDoc) {
     logEvent("cibil_decision", {
       applicationId: String(appDoc._id), formId: appDoc.formId,
       score: ex.score,
-      decision: goesToRejected ? "REJECT" : "PENDING_FILES",
+      decision: goesToRejected ? "REJECT" : "PENDING_CIBIL",
       result: isReject ? "LOW_CIBIL" : cibilResult,
       configuredRange: decision.configuredRange,
       autoRejectLowCibil: autoReject,
@@ -159,23 +158,23 @@ export async function processApplicationCibil(appDoc) {
       return { dealerStatus: DEALER_STATUS.REJECTED, reason, message: LOW_CIBIL_MESSAGE };
     }
 
-    // ── Everything else → Pending Files, at the first workflow stage ───────
-    // NTC (no/insufficient credit history), PASS, and reject-band scores when
-    // auto-reject is disabled all continue through the normal pipeline; only
-    // cibil.result distinguishes them.
+    // ── Everything else stays at Pending CIBIL ─────────────────────────────
+    // NTC, PASS, and reject-band scores when auto-reject is disabled all wait
+    // here for the Credit Note, which performs the move to Contact Creation.
+    // cibil.result records which band matched.
     const remark =
       cibilResult === "NTC"
-        ? `NTC — no or insufficient credit history (score ${ex.score} in pending range ${decision.configuredRange}). Manual underwriting required.`
+        ? `Pending CIBIL — NTC, no or insufficient credit history (score ${ex.score} in pending range ${decision.configuredRange})`
         : cibilResult === "PASS"
-        ? `CIBIL passed — score ${ex.score} in pass range ${decision.configuredRange}`
-        : `Low CIBIL (score ${ex.score} in reject range ${decision.configuredRange}) — auto-reject disabled, sent for manual review`;
+        ? `Pending CIBIL — CIBIL passed (score ${ex.score} in pass range ${decision.configuredRange})`
+        : `Pending CIBIL — low CIBIL (score ${ex.score} in reject range ${decision.configuredRange}), auto-reject disabled, manual review`;
 
     appDoc.status = "pending";
-    appDoc.workflowStage = pendingFilesStage;
-    appDoc.cibil.state = cibilResult === "NTC" ? "ntc" : cibilResult === "PASS" ? "passed" : "manual_review";
+    appDoc.workflowStage = PENDING_CIBIL_STAGE;
+    appDoc.cibil.state = "pending";
     appDoc.markModified("cibil");
     await appDoc.save();
-    await hist("STAGE_CHANGED", remark, pendingFilesStage);
+    await hist("CIBIL_PENDING", remark, "pending_cibil");
     return { dealerStatus: DEALER_STATUS.PENDING_CIBIL };
   } catch (err) {
     // Absolute safety net — creation must never fail because of CIBIL.
