@@ -8,6 +8,7 @@ import Application from "../models/Application.js";
 import { createHistoryEntry } from "./formTrackingController.js";
 import { normalizeWorkflows } from "../utils/workflowConstants.js";
 import { generateCreditNotePdf } from "../utils/creditNotePdf.js";
+import { creditNoteFilename } from "../utils/reportFilename.js";
 import { writeAppFile } from "../utils/fileStorage.js";
 import { logEvent } from "../utils/log.js";
 
@@ -150,7 +151,12 @@ export const completeCreditNote = async (req, res) => {
 
     // 4) Download the PDF.
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="credit-note-${folder}.pdf"`);
+    // Suggested download name only — the PDF itself is unchanged.
+    const downloadName = creditNoteFilename({
+      customerName: payload.customerName,
+      applicationNo: app.formId || String(app._id),
+    });
+    res.setHeader("Content-Disposition", `attachment; filename="${downloadName}"`);
     return res.status(200).send(pdfBuffer);
   } catch (err) {
     console.error("completeCreditNote error:", err?.message || err);

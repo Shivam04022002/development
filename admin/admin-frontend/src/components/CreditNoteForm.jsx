@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import API from "../services/api";
+import { creditNoteFilename } from "../utils/reportFilename";
 
 /**
  * CreditNoteForm — the Credit Note step, extracted verbatim from
@@ -74,7 +75,7 @@ export default function CreditNoteForm({
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `credit-note-${formId || applicationId}.pdf`;
+      link.download = creditNoteFilename({ customerName: applicantName, applicationNo: formId || applicationId });
       document.body.appendChild(link);
       link.click();
       link.remove();

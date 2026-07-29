@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import api from "../services/api";
 import CreditUnderwritingReport from "../components/underwriting/CreditUnderwritingReport";
+import { creditNoteFilename } from "../utils/reportFilename";
 
 /**
  * Development-only visual QA harness for the Credit Underwriting Decision
@@ -66,6 +67,26 @@ export default function CreditUnderwritingQA() {
     }
   }, []);
 
+  /**
+   * Print / Save as PDF. Browsers take the suggested filename from
+   * document.title, so it is set to the Credit Note name for the duration of
+   * the print and restored afterwards.
+   */
+  const printReport = () => {
+    const suggested = creditNoteFilename({
+      customerName: model?.customer?.name || model?.application?.customerName,
+      applicationNo: model?.application?.applicationNo,
+    }).replace(/\.pdf$/i, "");
+
+    const previous = document.title;
+    document.title = suggested;
+    const restore = () => { document.title = previous; };
+    window.addEventListener("afterprint", restore, { once: true });
+    window.print();
+    // Fallback for browsers that do not fire afterprint.
+    setTimeout(restore, 1500);
+  };
+
   /** Opens the EXISTING production credit-note PDF, for comparison only. */
   const openExistingPdf = () => {
     if (!existingPdfPath) return;
@@ -108,9 +129,11 @@ export default function CreditUnderwritingQA() {
 
         <div>
           <strong style={{ fontSize: 12 }}>Controls:</strong>{" "}
-          <button style={btn} onClick={() => window.print()}>Print</button>
-          <button style={btn} onClick={() => window.print()}
-            title="Use the browser's Save as PDF destination">Download PDF</button>
+          <button style={btn} onClick={printReport}>Print</button>
+          <button style={btn} onClick={printReport}
+            title="Uses the browser's Save as PDF destination; the filename is suggested automatically">
+            Download PDF
+          </button>
           <button style={btn} disabled={!existingPdfPath} onClick={openExistingPdf}
             title={existingPdfPath ? "Opens the existing production credit-note PDF" : "No stored PDF for this application"}>
             Open Existing PDF
