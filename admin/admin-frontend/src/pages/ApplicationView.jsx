@@ -50,6 +50,8 @@ export default function ApplicationView() {
   // Bumped after a successful Credit Note so the Timeline and Credit Note
   // summary remount and re-fetch through their own existing endpoints.
   const [refreshKey, setRefreshKey] = useState(0);
+  const [cibilJson, setCibilJson] = useState(null);
+  const [cibilBusy, setCibilBusy] = useState("");
 
   // Re-fetch the application through the existing workflow endpoint so the
   // workflow indicator reflects the stage the backend set, with no page reload.
@@ -62,6 +64,65 @@ export default function ApplicationView() {
     } catch (err) {
       console.error("Refresh after Credit Note failed:", err?.response?.status, err?.message);
     }
+  };
+
+  // ── CIBIL: stored JSON is the source of truth; PDFs are generated on
+  //    demand by the backend and never stored. All four calls reuse the
+  //    existing admin auth via the shared api instance.
+  const cibilFetch = async (path, responseType) =>
+    api.get(`/cibil/${app._id}${path}`, responseType ? { responseType } : undefined);
+
+  const saveBlob = (blob, filename) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const cibilError = (err) =>
+    alert(err?.response?.status === 404
+      ? "CIBIL data not available."
+      : `Failed: ${err?.response?.data?.message || err?.message || "unknown error"}`);
+
+  const handleViewJson = async () => {
+    setCibilBusy("viewJson");
+    try { setCibilJson((await cibilFetch("/json")).data); }
+    catch (err) { cibilError(err); }
+    finally { setCibilBusy(""); }
+  };
+
+  const handleDownloadJson = async () => {
+    setCibilBusy("dlJson");
+    try {
+      const { data } = await cibilFetch("/json");
+      saveBlob(new Blob([JSON.stringify(data.rawResponse, null, 2)], { type: "application/json" }),
+               `${app.formId || app._id}-cibil.json`);
+    } catch (err) { cibilError(err); }
+    finally { setCibilBusy(""); }
+  };
+
+  const handleViewPdf = async () => {
+    setCibilBusy("viewPdf");
+    try {
+      const res = await cibilFetch("/pdf", "blob");
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) { cibilError(err); }
+    finally { setCibilBusy(""); }
+  };
+
+  const handleDownloadPdf = async () => {
+    setCibilBusy("dlPdf");
+    try {
+      const res = await cibilFetch("/pdf/download", "blob");
+      saveBlob(new Blob([res.data], { type: "application/pdf" }),
+               `${app.formId || app._id}-CIBIL-Report.pdf`);
+    } catch (err) { cibilError(err); }
+    finally { setCibilBusy(""); }
   };
 
   // ================== Update / Approve ==================
@@ -720,6 +781,22 @@ export default function ApplicationView() {
                       <FieldPair label="Request ID" value={c.requestId || "—"} />
                     </div>
                   </div>
+
+                  {/* Stored JSON is the source of truth; PDFs are generated on demand. */}
+                  <div style={S.cibilActions}>
+                    <button style={S.cibilBtn} disabled={!!cibilBusy} onClick={handleViewJson}>
+                      {cibilBusy === "viewJson" ? "Loading…" : "View JSON"}
+                    </button>
+                    <button style={S.cibilBtn} disabled={!!cibilBusy} onClick={handleDownloadJson}>
+                      {cibilBusy === "dlJson" ? "Preparing…" : "Download JSON"}
+                    </button>
+                    <button style={S.cibilBtnPrimary} disabled={!!cibilBusy} onClick={handleViewPdf}>
+                      {cibilBusy === "viewPdf" ? "Generating…" : "View PDF"}
+                    </button>
+                    <button style={S.cibilBtnPrimary} disabled={!!cibilBusy} onClick={handleDownloadPdf}>
+                      {cibilBusy === "dlPdf" ? "Generating…" : "Download PDF"}
+                    </button>
+                  </div>
                 </>
               );
             })()}
@@ -815,6 +892,21 @@ export default function ApplicationView() {
 
         </div>
       </div>
+        {/* ──── CIBIL raw JSON modal ──── */}
+        {cibilJson && (
+          <div style={S.cnOverlay} onClick={() => setCibilJson(null)}>
+            <div style={{ ...S.cnModal, maxWidth: 900 }} onClick={(e) => e.stopPropagation()}>
+              <div style={S.cnHeader}>
+                <h2 style={S.cnTitle}>CIBIL Response (JSON)</h2>
+                <button type="button" aria-label="Close" onClick={() => setCibilJson(null)} style={S.cnClose}>×</button>
+              </div>
+              <div style={{ ...S.cnBody, background: "#0f172a" }}>
+                <pre style={S.jsonPre}>{JSON.stringify(cibilJson.rawResponse, null, 2)}</pre>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ──── Credit Note modal ──── */}
         {showCreditNote && (
           <div
@@ -1059,6 +1151,20 @@ const S = {
     height: 100,
     objectFit: "cover",
     borderRadius: 4,
+  },
+  cibilActions: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 },
+  cibilBtn: {
+    padding: "7px 14px", borderRadius: 8, border: "1px solid #cbd5e1",
+    background: "#fff", color: "#0B1F4D", fontWeight: 700, fontSize: 13, cursor: "pointer",
+  },
+  cibilBtnPrimary: {
+    padding: "7px 14px", borderRadius: 8, border: "1px solid #2563eb",
+    background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
+  },
+  jsonPre: {
+    margin: 0, color: "#e2e8f0", fontSize: 11.5, lineHeight: 1.5,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    whiteSpace: "pre", overflowX: "auto",
   },
   cnOverlay: {
     position: "fixed",

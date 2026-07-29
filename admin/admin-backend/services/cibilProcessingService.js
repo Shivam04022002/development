@@ -172,7 +172,9 @@ async function saveCibilReport(appDoc, result) {
         applicationId: appDoc._id,
         vendor: VENDOR,
         rawRequest: result?.request ?? null,
-        rawResponse: null,               // no longer stored in Mongo (kept as a file)
+        // Stored in Mongo so the JSON is the permanent source of truth for
+        // on-demand PDF/JSON viewing; the file copy below is kept as-is.
+        rawResponse: result?.raw ?? null,
         rawResponsePath,                 // relative path under uploads/
         reportUrl: ex.reportUrl || "",
         requestId: ex.requestId || "",
