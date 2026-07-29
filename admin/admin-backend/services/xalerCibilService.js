@@ -24,6 +24,7 @@
 // timeout, so no extra dependency is added to the admin backend.
 //
 import crypto from "crypto";
+import { logEvent, logWarn } from "../utils/log.js";
 
 const REQUEST_TIMEOUT_MS = 20000;
 const MAX_RETRIES = 3;
@@ -129,50 +130,132 @@ function buildRequestBody(applicant = {}, requestId) {
 }
 
 /**
+ * Generic deep walker. Yields [path, key, value] for every leaf in an
+ * arbitrary object/array tree, so extraction does not depend on the vendor
+ * keeping a fixed response shape.
+ */
+function* walkLeaves(node, path = "", depth = 0) {
+  if (depth > 16 || node === null || node === undefined) return;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) yield* walkLeaves(node[i], `${path}[${i}]`, depth + 1);
+    return;
+  }
+  if (typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      const p = path ? `${path}.${k}` : k;
+      if (v !== null && typeof v === "object") yield* walkLeaves(v, p, depth + 1);
+      else yield [p, k, v];
+    }
+  }
+}
+
+/** First leaf whose key matches and whose value passes `valid`. */
+function findLeaf(data, keyMatches, valid) {
+  for (const [path, key, value] of walkLeaves(data)) {
+    if (!keyMatches(String(key).toLowerCase())) continue;
+    if (valid && !valid(value)) continue;
+    return { value, path };
+  }
+  return { value: undefined, path: "" };
+}
+
+// A CIBIL score is 300–900; the range check stops the walker latching onto
+// unrelated numerics (e.g. "CreditMix": 25) or onto "scoreName" strings.
+const SCORE_MIN = 300;
+const SCORE_MAX = 900;
+const isScoreValue = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= SCORE_MIN && n <= SCORE_MAX;
+};
+
+// Checked in priority order anywhere in the tree. `riskScore` is what the
+// TransUnion payload actually uses
+// (steps[].response…TrueLinkCreditReport.Borrower.CreditScore.riskScore).
+const SCORE_KEYS = ["riskscore", "cibilscore", "creditscore", "bureauscore", "score"];
+const DATE_KEYS = ["inquirydate", "reportdate", "report_date", "generatedon", "creationdate", "date"];
+
+/** Locate the score anywhere in the response, preferring the documented keys. */
+function findScore(data) {
+  for (const wanted of SCORE_KEYS) {
+    const hit = findLeaf(data, (k) => k === wanted, isScoreValue);
+    if (hit.value !== undefined) return hit;
+  }
+  return { value: undefined, path: "" };
+}
+
+/**
+ * Report date. Prefers a date that sits alongside the score (the CreditScore
+ * block carries Source.InquiryDate), then falls back to any documented date key.
+ */
+function findReportDate(data, scorePath) {
+  if (scorePath) {
+    const parent = scorePath.replace(/\.[^.]+$/, "");
+    for (const wanted of DATE_KEYS) {
+      for (const [path, key, value] of walkLeaves(data)) {
+        if (path.startsWith(parent) && String(key).toLowerCase() === wanted && value) {
+          return { value, path };
+        }
+      }
+    }
+  }
+  for (const wanted of DATE_KEYS.filter((k) => k !== "date")) {
+    const hit = findLeaf(data, (k) => k === wanted, (v) => !!v);
+    if (hit.value !== undefined) return hit;
+  }
+  return { value: undefined, path: "" };
+}
+
+/**
  * Normalise the vendor response into the fields we persist for quick access.
- * Returns { extracted, hasScore }.
+ * Returns { extracted, hasScore, diagnostics }.
  */
 function extractReport(data) {
-  const scoreRaw = pick(data, [
-    "cibilScore", "score", "creditScore", "bureauScore",
-    "data.cibilScore", "data.score", "result.score",
-  ]);
-  const score = scoreRaw === undefined ? null : Number(scoreRaw);
-  const hasScore = score !== null && !Number.isNaN(score);
+  const scoreHit = findScore(data);
+  const hasScore = scoreHit.value !== undefined;
+  const score = hasScore ? Number(scoreHit.value) : null;
+
+  const dateHit = findReportDate(data, scoreHit.path);
+  // TransUnion emits "2026-07-29+05:30", which new Date() rejects. Keep the
+  // vendor's date but in the parseable leading form so the existing admin
+  // formatters render it instead of falling back to "—".
+  const reportDate = (() => {
+    const raw = String(dateHit.value ?? "");
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : raw;
+  })();
+
+  // doc §5.4/§5.5 return `client_key` as the flow identifier and `report_url`
+  // for the stored report; both sit at the top level. Deep lookups are kept as
+  // fallbacks so a nested variant still resolves.
+  const requestId =
+    pick(data, ["client_key", "requestId", "requestID", "refId", "referenceId", "transactionId"]) ??
+    findLeaf(data, (k) => k === "client_key" || k === "requestid", (v) => !!v).value;
+
+  const reportUrl =
+    pick(data, ["report_url", "reportUrl", "pdfUrl", "reportLink", "documentUrl"]) ??
+    findLeaf(data, (k) => k === "report_url" || k === "reporturl", (v) => !!v).value;
+
+  const status = pick(data, ["status", "reportStatus", "data.status"]);
 
   const extracted = {
-    score: hasScore ? score : null,
-    reportDate: String(
-      pick(data, ["reportDate", "date", "generatedOn", "data.reportDate"]) ?? ""
-    ),
-    // doc §5.4/§5.5 return `client_key` as the flow identifier.
-    requestId: String(
-      pick(data, [
-        "client_key",
-        "requestId", "requestID", "refId", "referenceId", "transactionId", "data.requestId",
-      ]) ?? ""
-    ),
-    customerName: String(
-      pick(data, ["customerName", "name", "consumerName", "data.customerName"]) ?? ""
-    ),
-    resultCode: String(
-      pick(data, ["resultCode", "result", "code", "statusCode", "data.resultCode"]) ?? ""
-    ),
-    // doc §5.4/§5.5 return `status`: "success" | "partial" | "error".
-    status: String(
-      pick(data, ["status", "reportStatus", "data.status"]) ?? ""
-    ),
-    // doc §5.4/§5.5 return the S3 report as `report_url`.
-    reportUrl: String(
-      pick(data, [
-        "report_url",
-        "reportUrl", "pdfUrl", "reportLink", "pdfLink", "reportPdfUrl",
-        "documentUrl", "data.reportUrl", "data.pdfUrl",
-      ]) ?? ""
-    ),
+    score,
+    reportDate,
+    requestId: String(requestId ?? ""),
+    customerName: String(pick(data, ["customerName", "name", "consumerName"]) ?? ""),
+    resultCode: String(pick(data, ["resultCode", "result", "code", "statusCode"]) ?? ""),
+    status: String(status ?? ""),
+    reportUrl: String(reportUrl ?? ""),
   };
 
-  return { extracted, hasScore };
+  const diagnostics = {
+    scorePath: scoreHit.path || null,
+    reportDatePath: dateHit.path || null,
+    topLevelKeys: data && typeof data === "object" ? Object.keys(data) : [],
+    searchedScoreKeys: SCORE_KEYS,
+    scoreRange: `${SCORE_MIN}-${SCORE_MAX}`,
+  };
+
+  return { extracted, hasScore, diagnostics };
 }
 
 /** Parse a response body as JSON, tolerating non-JSON payloads. */
@@ -244,6 +327,20 @@ export async function fetchCibilReport(applicant, config) {
 
       const data = await parseBody(res);
 
+      // TEMPORARY DEBUG: full vendor response, pretty-printed. The body carries
+      // applicant credit data only — the API key travels in the Authorization
+      // header and is never part of the response. Remove once parsing is
+      // confirmed in production (a single response is ~1 MB).
+      try {
+        console.log(
+          `[xalerCibil] raw response (HTTP ${httpStatus}):
+` +
+          (typeof data === "object" ? JSON.stringify(data, null, 2) : String(data))
+        );
+      } catch (logErr) {
+        console.warn("[xalerCibil] could not stringify response:", logErr?.message);
+      }
+
       // Non-object body → invalid.
       if (!data || typeof data !== "object") {
         return {
@@ -269,7 +366,7 @@ export async function fetchCibilReport(applicant, config) {
         };
       }
 
-      const { extracted, hasScore } = extractReport(data);
+      const { extracted, hasScore, diagnostics } = extractReport(data);
       const flowStatus = String(data.status || "").toLowerCase();
 
       // ── Documented unified statuses (doc §5.4 / §5.5) ──────────────────────
@@ -303,9 +400,29 @@ export async function fetchCibilReport(applicant, config) {
       // "success" (or a legacy body without a `status`) still needs a usable
       // score before the minimum-score rule can be applied.
       if (!hasScore) {
+        // Everything needed to diagnose a shape change, without another code edit.
+        logWarn("cibil_score_not_found", {
+          httpStatus,
+          topLevelKeys: diagnostics.topLevelKeys,
+          detectedStatus: extracted.status || null,
+          detectedRequestId: extracted.requestId || null,
+          detectedReportUrl: extracted.reportUrl || null,
+          detectedReportDate: extracted.reportDate || null,
+          searchedScoreKeys: diagnostics.searchedScoreKeys,
+          acceptedScoreRange: diagnostics.scoreRange,
+          message: typeof data?.message === "string" ? data.message : null,
+        });
         return { ok: false, invalid: true, reason: "CIBIL score missing in response", raw: data, attempts, request: sanitizedRequest };
       }
 
+      logEvent("cibil_parsed", {
+        score: extracted.score,
+        scorePath: diagnostics.scorePath,
+        reportDatePath: diagnostics.reportDatePath,
+        status: extracted.status || null,
+        requestId: extracted.requestId || null,
+        hasReportUrl: !!extracted.reportUrl,
+      });
       return { ok: true, extracted, raw: data, attempts, request: sanitizedRequest };
     } catch (err) {
       clearTimeout(timer);
