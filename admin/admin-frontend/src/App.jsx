@@ -13,11 +13,20 @@ import CibilSettings from "./pages/CibilSettings";
 import PendingCibil from "./pages/PendingCibil";
 import PendingCibilView from "./pages/PendingCibilView";
 import AdminAnalytics from "./pages/AdminAnalytics";
+import CibilReportQA from "./pages/CibilReportQA";
+
+// Feature flag: the CIBIL report QA harness ships only in non-production
+// builds, or when VITE_CIBIL_QA=1 is set explicitly.
+const CIBIL_QA_ENABLED = import.meta.env.DEV || import.meta.env.VITE_CIBIL_QA === "1";
 
 
 const App = () => {
   return (
     <Routes>
+      {/* Development-only visual QA for the CIBIL report renderer.
+          Not linked from the admin navigation. */}
+      {CIBIL_QA_ENABLED && <Route path="/cibil-report-qa" element={<CibilReportQA />} />}
+
       {/*  Auth & Dashboard */}
       <Route path="/" element={<LoginPage />} />
       <Route path="/dashboard" element={<Dashboard />} />

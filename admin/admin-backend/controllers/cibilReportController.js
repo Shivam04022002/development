@@ -12,6 +12,7 @@ import ApprovedApplication from "../models/ApprovedApplication.js";
 import RejectedApplication from "../models/RejectedApplication.js";
 import CibilReport from "../models/CibilReport.js";
 import { generateCibilReportPdf } from "../utils/cibilReportPdf.js";
+import { buildReportModel } from "../utils/cibilReportData.js";
 import { absFromRel } from "../utils/fileStorage.js";
 import { logError } from "../utils/log.js";
 
@@ -76,6 +77,34 @@ export const getCibilJson = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/cibil/:applicationId/model — the NORMALISED report model.
+ * Same auth and same underlying data as /json; the renderer consumes this so
+ * it never has to touch the raw vendor payload. Also returns the bureau status
+ * message for a failed flow, which the model itself does not carry.
+ */
+export const getCibilModel = async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const app = await findApplication(applicationId);
+    if (!app) return res.status(404).json(NOT_AVAILABLE);
+
+    const { raw } = await loadRawResponse(applicationId);
+    if (raw === null) return res.status(404).json(NOT_AVAILABLE);
+
+    const model = buildReportModel({ app, cibil: app.cibil || {}, raw });
+    const statusMessage =
+      raw && typeof raw === "object" && raw.status !== "success" && typeof raw.message === "string"
+        ? raw.message
+        : null;
+
+    return res.json({ success: true, model, statusMessage });
+  } catch (err) {
+    logError("cibil_model_failed", { applicationId: req.params?.applicationId, error: err?.message });
+    return res.status(500).json({ success: false, message: "Failed to build CIBIL report model." });
+  }
+};
+
 /** Shared PDF path for inline viewing and attachment download. */
 async function streamPdf(req, res, disposition) {
   const { applicationId } = req.params;
@@ -117,4 +146,4 @@ export const downloadCibilPdf = async (req, res) => {
   }
 };
 
-export default { getCibilJson, viewCibilPdf, downloadCibilPdf };
+export default { getCibilJson, getCibilModel, viewCibilPdf, downloadCibilPdf };

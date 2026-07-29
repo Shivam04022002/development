@@ -7,6 +7,7 @@ import express from "express";
 import protect from "../middleware/authMiddleware.js";
 import {
   getCibilJson,
+  getCibilModel,
   viewCibilPdf,
   downloadCibilPdf,
 } from "../controllers/cibilReportController.js";
@@ -14,6 +15,7 @@ import {
 const router = express.Router();
 
 router.get("/:applicationId/json", protect, getCibilJson);
+router.get("/:applicationId/model", protect, getCibilModel);
 router.get("/:applicationId/pdf/download", protect, downloadCibilPdf); // before /pdf
 router.get("/:applicationId/pdf", protect, viewCibilPdf);
 
