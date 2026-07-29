@@ -1,0 +1,120 @@
+/* CIBIL report — screen and print. Pagination is data-driven: page breaks come
+   from these rules, never from a hardcoded page count. */
+
+.cibil-report {
+  --cr-ink: #0f172a; --cr-muted: #64748b; --cr-line: #d7dee8;
+  --cr-head: #0b1f4d; --cr-band: #f1f5f9;
+  background: #fff; color: var(--cr-ink);
+  font: 12px/1.45 "Segoe UI", Arial, sans-serif;
+  max-width: 900px; margin: 0 auto; padding: 18px 22px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.cr-header { display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 20px; border-bottom: 3px solid var(--cr-head); padding-bottom: 10px; margin-bottom: 14px; }
+.cr-brand-name { font-size: 20px; font-weight: 800; color: var(--cr-head); letter-spacing: .5px; }
+.cr-brand-sub { font-size: 11px; color: var(--cr-muted); text-transform: uppercase; letter-spacing: 1px; }
+.cr-header-meta { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px 10px; font-size: 11px; }
+.cr-kv { display: contents; }
+.cr-kv dt { color: var(--cr-muted); }
+.cr-kv dd { margin: 0; font-weight: 600; text-align: right; }
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+.cr-section { margin: 0 0 16px; break-inside: avoid; }
+.cr-h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px;
+  color: #fff; background: var(--cr-head); padding: 6px 10px; margin: 0 0 10px;
+  display: flex; justify-content: space-between; align-items: center; }
+.cr-count { font-weight: 600; font-size: 11px; opacity: .85; text-transform: none; }
+.cr-h3 { font-size: 12px; font-weight: 700; color: var(--cr-head); margin: 10px 0 6px;
+  text-transform: uppercase; letter-spacing: .4px; }
+.cr-h4 { font-size: 11px; font-weight: 700; color: var(--cr-muted); margin: 8px 0 4px;
+  text-transform: uppercase; letter-spacing: .4px; }
+.cr-subsection { break-inside: avoid; margin-bottom: 10px; }
+.cr-empty { color: var(--cr-muted); font-style: italic; margin: 4px 0 10px; }
+
+.cr-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cr-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.cr-panel { border: 1px solid var(--cr-line); padding: 8px 10px; }
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+.cr-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.cr-table th, .cr-table td { border: 1px solid var(--cr-line); padding: 4px 6px; text-align: left;
+  vertical-align: top; }
+.cr-table thead th { background: var(--cr-band); font-weight: 700; text-transform: uppercase;
+  font-size: 10px; letter-spacing: .3px; }
+.cr-table tbody tr:nth-child(even) { background: #fafbfc; }
+.cr-table-compact td, .cr-table-compact th { text-align: center; }
+.cr-num { text-align: right; }
+.cr-mono { font-family: Consolas, "Courier New", monospace; }
+
+.cr-kv-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.cr-kv-table th { width: 45%; text-align: left; font-weight: 500; color: var(--cr-muted);
+  padding: 3px 6px 3px 0; vertical-align: top; }
+.cr-kv-table td { padding: 3px 0; font-weight: 600; word-break: break-word; }
+.cr-kv-wide th { width: 14%; }
+
+/* ── Score ──────────────────────────────────────────────────────────────── */
+.cr-score-body { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
+.cr-score-name { font-size: 11px; color: var(--cr-muted); text-transform: uppercase; }
+.cr-score-value { font-size: 40px; font-weight: 800; line-height: 1.1; }
+.cr-score-band { font-size: 11px; font-weight: 800; letter-spacing: 1px; margin-bottom: 6px; }
+.cr-gauge { position: relative; height: 10px; border-radius: 6px; background: #e2e8f0; overflow: visible; }
+.cr-gauge-fill { height: 100%; border-radius: 6px; }
+.cr-gauge-marker { position: absolute; top: -3px; width: 3px; height: 16px; background: var(--cr-ink);
+  transform: translateX(-50%); }
+.cr-gauge-scale { display: flex; justify-content: space-between; font-size: 10px;
+  color: var(--cr-muted); margin-top: 3px; }
+.cr-factor-list { margin: 4px 0 0 16px; padding: 0; }
+.cr-factor-list li { margin-bottom: 3px; }
+
+/* ── Account cards ──────────────────────────────────────────────────────── */
+.cr-account { border: 1px solid var(--cr-line); padding: 8px 10px; margin-bottom: 10px;
+  break-inside: avoid; page-break-inside: avoid; }
+.cr-account-head { display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--cr-line); padding-bottom: 4px; margin-bottom: 6px; }
+.cr-account-no { font-weight: 800; font-size: 12px; color: var(--cr-head); }
+.cr-badge { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 10px; letter-spacing: .5px; }
+.cr-badge-on { background: #dcfce7; color: #166534; }
+.cr-badge-off { background: #f1f5f9; color: #475569; }
+.cr-account-dates { display: flex; flex-wrap: wrap; gap: 14px; font-size: 10.5px;
+  color: var(--cr-muted); margin-bottom: 8px; }
+
+/* ── DPD grid ───────────────────────────────────────────────────────────── */
+.cr-dpd { break-inside: avoid; }
+.cr-dpd-meta { display: flex; gap: 16px; font-size: 10px; color: var(--cr-muted); margin-bottom: 3px; }
+.cr-dpd-table th, .cr-dpd-table td { text-align: center; padding: 3px 2px; font-size: 10px; }
+.cr-dpd-table tbody th { background: var(--cr-band); font-weight: 700; }
+.dpd-ok { background: #dcfce7; color: #166534; font-weight: 700; }
+.dpd-warn { background: #fef3c7; color: #92400e; font-weight: 700; }
+.dpd-bad { background: #fee2e2; color: #991b1b; font-weight: 700; }
+.dpd-none { color: #cbd5e1; }
+
+/* ── Notice (partial / error) ───────────────────────────────────────────── */
+.cr-notice-lead { margin: 6px 0; }
+.cr-notice-msg { margin: 10px 0; padding: 8px 10px; background: #fef2f2;
+  border-left: 3px solid #ef4444; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.cr-footer { border-top: 2px solid var(--cr-head); margin-top: 18px; padding-top: 10px;
+  break-inside: avoid; }
+.cr-end { text-align: center; font-weight: 800; letter-spacing: .5px; margin-bottom: 10px;
+  text-transform: uppercase; font-size: 11px; }
+.cr-disclaimer { font-size: 10px; color: var(--cr-muted); line-height: 1.5; text-align: justify; }
+.cr-footer-meta { display: flex; justify-content: space-between; font-size: 10px;
+  color: var(--cr-muted); margin-top: 8px; }
+
+/* ── Pagination / print ─────────────────────────────────────────────────── */
+.cr-page-break { break-before: page; page-break-before: always; height: 0; }
+
+@media print {
+  @page { size: A4; margin: 12mm 10mm 14mm; }
+  body { background: #fff; }
+  .cibil-report { max-width: none; margin: 0; padding: 0; font-size: 10.5px; }
+  .cr-no-print, .cr-toolbar { display: none !important; }
+  .cr-h2 { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cr-table thead { display: table-header-group; }  /* repeat headers across pages */
+  .cr-table tr, .cr-account, .cr-subsection, .cr-dpd, .cr-footer { break-inside: avoid; }
+  .dpd-ok, .dpd-warn, .dpd-bad, .cr-badge-on, .cr-badge-off, .cr-notice-msg {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+}
