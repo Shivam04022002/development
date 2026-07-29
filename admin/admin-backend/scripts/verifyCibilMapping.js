@@ -59,8 +59,14 @@ const model = buildReportModel({
   raw,
 });
 
+// A "partial" / "error" flow legitimately carries no credit report; the
+// dataset assertions below only apply when one is present.
+const flowStatus = typeof raw?.status === "string" ? raw.status : "unknown";
+const hasReport = model.consumer.name !== null || model.accounts.length > 0;
+
 console.log("=== CIBIL mapping verification ===");
 console.log("source:", file);
+console.log("flow status:", flowStatus, "| credit report present:", hasReport);
 console.log("");
 
 // ── Header ───────────────────────────────────────────────────────────────────
@@ -82,7 +88,7 @@ c.telephones.forEach((t, i) => {
   check(`telephones[${i}].number is string`, typeof t.number === "string" && t.number.length > 0, JSON.stringify(t));
   check(`telephones[${i}].type resolved`, isStrOrNull(t.type));
 });
-check("telephones populated (path fix)", c.telephones.length > 0, `got ${c.telephones.length}`);
+if (hasReport) check("telephones populated (path fix)", c.telephones.length > 0, `got ${c.telephones.length}`);
 
 check("emails is array of strings", Array.isArray(c.emails) && c.emails.every((e) => typeof e === "string"));
 
@@ -92,8 +98,16 @@ c.addresses.forEach((a, i) => {
   check(`addresses[${i}].dateReported format`, isDateOrNull(a.dateReported));
   check(`addresses[${i}].region resolved`, isStrOrNull(a.region));
 });
-check("addresses populated (path fix)", c.addresses.some((a) => a.line !== null),
-  `lines: ${c.addresses.map((a) => a.line).join(" | ")}`);
+if (hasReport) {
+  check("addresses populated (path fix)", c.addresses.some((a) => a.line !== null),
+    `lines: ${c.addresses.map((a) => a.line).join(" | ")}`);
+} else {
+  // Report-less payloads must still produce a valid, empty model.
+  check("report-less payload yields empty sections",
+    model.accounts.length === 0 && model.enquiries.length === 0 && c.telephones.length === 0);
+  check("report-less payload keeps summaries at zero",
+    model.summary.accounts.total === 0 && model.summary.enquiries.total === 0);
+}
 
 check("employment is array", Array.isArray(c.employment));
 c.employment.forEach((e, i) => {
