@@ -33,6 +33,8 @@ const RejectedSchema = new mongoose.Schema(
       score: { type: Number, default: null },
       status: { type: String, default: "" },
       state: { type: String, default: "" },
+      // Decision outcome: "NTC" | "PASS" | "REJECT" (set by cibilProcessingService).
+      result: { type: String, default: "" },
       reportDate: { type: String, default: "" },
       requestId: { type: String, default: "" },
       fetchedAt: { type: Date, default: null },

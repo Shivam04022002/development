@@ -114,26 +114,41 @@ export async function processApplicationCibil(appDoc) {
     };
 
     // ── Decision bands, configured in Admin → CIBIL Settings ───────────────
-    // No thresholds are hardcoded here: the bands are read per application, so
-    // changing them in Admin takes effect on the next submission with no
-    // restart or redeploy.
+    // Pending CIBIL is only a holding state while the vendor response is
+    // outstanding. Once a valid score exists the application always leaves it:
+    // to Rejected, or into Pending Files at the first workflow stage. No
+    // threshold and no stage name is hardcoded here.
     const decision = decideByScore(ex.score, config);
-    const passStage = getNextStage(PENDING_CIBIL_STAGE);
+    const pendingFilesStage = getNextStage(PENDING_CIBIL_STAGE);
+
+    // No usable score (null / unparseable): stay in Pending CIBIL and wait.
+    if (decision.matched === null) {
+      logEvent("cibil_decision", {
+        applicationId: String(appDoc._id), formId: appDoc.formId,
+        score: ex.score ?? null, decision: "PENDING_CIBIL", result: "AWAITING",
+        configuredRange: null,
+      });
+      return await markPending(appDoc, "pending", WAITING_REASON, hist);
+    }
+
+    const autoReject = config.autoRejectLowCibil === true;
+    const isReject = decision.matched === "reject";
+    const cibilResult = isReject ? "REJECT" : decision.matched === "pass" ? "PASS" : "NTC";
+    const goesToRejected = isReject && autoReject;
 
     logEvent("cibil_decision", {
-      applicationId: String(appDoc._id),
-      formId: appDoc.formId,
+      applicationId: String(appDoc._id), formId: appDoc.formId,
       score: ex.score,
-      matchedRange: decision.matched ?? "pending",
+      decision: goesToRejected ? "REJECT" : "PENDING_FILES",
+      result: isReject ? "LOW_CIBIL" : cibilResult,
       configuredRange: decision.configuredRange,
-      nextStage: decision.matched === "reject" ? REJECTED_STAGE
-        : decision.matched === "pass" ? passStage
-        : PENDING_CIBIL_STAGE,
+      autoRejectLowCibil: autoReject,
     });
 
-    // Reject band. autoRejectLowCibil remains the existing master switch: when
-    // it is off, a reject-band score is held at Pending CIBIL for manual review.
-    if (decision.matched === "reject" && config.autoRejectLowCibil === true) {
+    appDoc.cibil.result = cibilResult;
+
+    // ── Reject band with the master switch on → Rejected Files ─────────────
+    if (goesToRejected) {
       const reason = config.lowCibilRejectionReason || "Low CIBIL Score";
       await moveToRejected(appDoc, reason);
       await hist(
@@ -144,28 +159,23 @@ export async function processApplicationCibil(appDoc) {
       return { dealerStatus: DEALER_STATUS.REJECTED, reason, message: LOW_CIBIL_MESSAGE };
     }
 
-    // Pass band → advance one step using the existing workflow progression.
-    if (decision.matched === "pass") {
-      appDoc.status = "pending";
-      appDoc.workflowStage = passStage;
-      appDoc.cibil.state = "passed";
-      appDoc.markModified("cibil");
-      await appDoc.save();
-      await hist(
-        "STAGE_CHANGED",
-        `CIBIL passed — score ${ex.score} in pass range ${decision.configuredRange}`,
-        passStage
-      );
-      return { dealerStatus: DEALER_STATUS.PENDING_CIBIL };
-    }
+    // ── Everything else → Pending Files, at the first workflow stage ───────
+    // NTC (no/insufficient credit history), PASS, and reject-band scores when
+    // auto-reject is disabled all continue through the normal pipeline; only
+    // cibil.result distinguishes them.
+    const remark =
+      cibilResult === "NTC"
+        ? `NTC — no or insufficient credit history (score ${ex.score} in pending range ${decision.configuredRange}). Manual underwriting required.`
+        : cibilResult === "PASS"
+        ? `CIBIL passed — score ${ex.score} in pass range ${decision.configuredRange}`
+        : `Low CIBIL (score ${ex.score} in reject range ${decision.configuredRange}) — auto-reject disabled, sent for manual review`;
 
-    // Pending band, an unmatched score, or auto-reject disabled → Pending CIBIL.
     appDoc.status = "pending";
-    appDoc.workflowStage = PENDING_CIBIL_STAGE;
-    appDoc.cibil.state = "pending";
+    appDoc.workflowStage = pendingFilesStage;
+    appDoc.cibil.state = cibilResult === "NTC" ? "ntc" : cibilResult === "PASS" ? "passed" : "manual_review";
     appDoc.markModified("cibil");
     await appDoc.save();
-    await hist("CIBIL_PENDING", `Pending CIBIL — score ${ex.score}`, "pending_cibil");
+    await hist("STAGE_CHANGED", remark, pendingFilesStage);
     return { dealerStatus: DEALER_STATUS.PENDING_CIBIL };
   } catch (err) {
     // Absolute safety net — creation must never fail because of CIBIL.
