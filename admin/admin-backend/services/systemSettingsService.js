@@ -6,6 +6,7 @@
 //
 import SystemSettings from "../models/SystemSettings.js";
 import { decrypt } from "../utils/secretCrypto.js";
+import { normalizeRanges } from "../utils/cibilRanges.js";
 
 const SETTINGS_KEY = "system";
 
@@ -24,6 +25,8 @@ export async function getDecryptedCibilConfig() {
     minimumScore: typeof c.minimumScore === "number" ? c.minimumScore : 650,
     autoRejectLowCibil: typeof c.autoRejectLowCibil === "boolean" ? c.autoRejectLowCibil : true,
     lowCibilRejectionReason: c.lowCibilRejectionReason || "Low CIBIL Score",
+    // Decision bands, defaulted when an older document lacks them.
+    ...normalizeRanges(c),
   };
 }
 

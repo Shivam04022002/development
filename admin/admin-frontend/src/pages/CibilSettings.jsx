@@ -15,6 +15,9 @@ const emptyForm = {
   apiUrl: "",
   apiKey: "",
   minimumScore: 650,
+  pendingRange: { min: -1, max: 200 },
+  rejectRange: { min: 201, max: 649 },
+  passRange: { min: 650, max: 900 },
   autoRejectLowCibil: true,
   lowCibilRejectionReason: "Low CIBIL Score",
 };
@@ -52,6 +55,9 @@ export default function CibilSettings() {
           apiUrl: c.apiUrl || "",
           apiKey: "",
           minimumScore: c.minimumScore ?? 650,
+          pendingRange: c.pendingRange ?? { min: -1, max: 200 },
+          rejectRange: c.rejectRange ?? { min: 201, max: 649 },
+          passRange: c.passRange ?? { min: 650, max: 900 },
           autoRejectLowCibil:
             typeof c.autoRejectLowCibil === "boolean" ? c.autoRejectLowCibil : true,
           lowCibilRejectionReason: c.lowCibilRejectionReason || "Low CIBIL Score",
@@ -71,7 +77,49 @@ export default function CibilSettings() {
 
   const setField = (name, value) => setForm((f) => ({ ...f, [name]: value }));
 
+  const RANGES = [
+    ["pendingRange", "Pending"],
+    ["rejectRange", "Reject"],
+    ["passRange", "Pass"],
+  ];
+
+  const setRange = (key, edge, value) =>
+    setForm((f) => ({ ...f, [key]: { ...f[key], [edge]: value } }));
+
+  // Same rules the backend enforces, shown before saving.
+  const rangeErrors = (() => {
+    const errs = [];
+    const num = (v) => (v === "" || v === null || v === undefined ? NaN : Number(v));
+    const vals = {};
+    for (const [key, label] of RANGES) {
+      const min = num(form[key]?.min);
+      const max = num(form[key]?.max);
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        errs.push(`${label} range: minimum and maximum must both be numbers.`);
+        continue;
+      }
+      if (!Number.isInteger(min) || !Number.isInteger(max)) {
+        errs.push(`${label} range: minimum and maximum must be whole numbers.`);
+      }
+      if (min > max) errs.push(`${label} range: minimum (${min}) must be <= maximum (${max}).`);
+      vals[key] = { min, max };
+    }
+    if (errs.length) return errs;
+    for (let i = 0; i < RANGES.length - 1; i++) {
+      const [aKey, aLabel] = RANGES[i];
+      const [bKey, bLabel] = RANGES[i + 1];
+      const a = vals[aKey], b = vals[bKey];
+      if (b.min <= a.max) {
+        errs.push(`${bLabel} range overlaps ${aLabel} range: ${bLabel} starts at ${b.min} but ${aLabel} ends at ${a.max}.`);
+      } else if (b.min !== a.max + 1) {
+        errs.push(`Gap between ${aLabel} and ${bLabel}: ${bLabel} must start at ${a.max + 1} (got ${b.min}).`);
+      }
+    }
+    return errs;
+  })();
+
   const handleSave = async (e) => {
+    if (rangeErrors.length > 0) { e.preventDefault(); return; }
     e.preventDefault();
     setSaving(true);
     setToast(null);
@@ -82,6 +130,9 @@ export default function CibilSettings() {
         minimumScore: Number(form.minimumScore),
         autoRejectLowCibil: !!form.autoRejectLowCibil,
         lowCibilRejectionReason: form.lowCibilRejectionReason,
+        pendingRange: { min: Number(form.pendingRange.min), max: Number(form.pendingRange.max) },
+        rejectRange: { min: Number(form.rejectRange.min), max: Number(form.rejectRange.max) },
+        passRange: { min: Number(form.passRange.min), max: Number(form.passRange.max) },
       };
       if (form.apiKey) payload.apiKey = form.apiKey;
 
@@ -224,6 +275,45 @@ export default function CibilSettings() {
                 </span>
               </div>
 
+              {/* ── Decision bands ── */}
+              <div style={{ marginBottom: 16, paddingTop: 6, borderTop: "1px solid #E5E7EB" }}>
+                <label style={{ ...labelStyle, marginTop: 12 }}>Decision Ranges</label>
+                <span style={{ color: "#9CA3AF", fontSize: 13, display: "block", marginBottom: 10 }}>
+                  Ranges must be continuous and must not overlap. A score is matched against
+                  Pending, then Reject, then Pass.
+                </span>
+
+                {RANGES.map(([key, label]) => (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <span style={{ minWidth: 90, fontWeight: 600, color: BRAND.blue, fontSize: 14 }}>{label}</span>
+                    <input
+                      type="number"
+                      className="form-control"
+                      style={{ maxWidth: 120 }}
+                      value={form[key]?.min ?? ""}
+                      onChange={(e) => setRange(key, "min", e.target.value)}
+                      aria-label={`${label} minimum score`}
+                    />
+                    <span style={{ color: "#9CA3AF" }}>to</span>
+                    <input
+                      type="number"
+                      className="form-control"
+                      style={{ maxWidth: 120 }}
+                      value={form[key]?.max ?? ""}
+                      onChange={(e) => setRange(key, "max", e.target.value)}
+                      aria-label={`${label} maximum score`}
+                    />
+                  </div>
+                ))}
+
+                {rangeErrors.length > 0 && (
+                  <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 8,
+                                background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", fontSize: 13 }}>
+                    {rangeErrors.map((msg, i) => (<div key={i}>• {msg}</div>))}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label style={labelStyle}>Low CIBIL Rejection Reason</label>
                 <input
@@ -239,7 +329,7 @@ export default function CibilSettings() {
               <button
                 type="submit"
                 className="btn"
-                disabled={saving}
+                disabled={saving || rangeErrors.length > 0}
                 style={{ background: BRAND.orange, color: "#fff", fontWeight: 700, minWidth: 140 }}
               >
                 {saving ? "Saving…" : "Save Settings"}

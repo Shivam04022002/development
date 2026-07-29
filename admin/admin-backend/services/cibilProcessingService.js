@@ -24,7 +24,8 @@ import { createHistoryEntry } from "../controllers/formTrackingController.js";
 import CibilReport from "../models/CibilReport.js";
 import Application from "../models/Application.js";
 import RejectedApplication from "../models/RejectedApplication.js";
-import { PENDING_CIBIL_STAGE } from "../utils/workflowConstants.js";
+import { PENDING_CIBIL_STAGE, getNextStage } from "../utils/workflowConstants.js";
+import { decideByScore } from "../utils/cibilRanges.js";
 import { writeAppFile } from "../utils/fileStorage.js";
 import { logEvent } from "../utils/log.js";
 
@@ -112,20 +113,53 @@ export async function processApplicationCibil(appDoc) {
       requestId: ex.requestId,
     };
 
-    // ── Minimum-score auto-reject rule ─────────────────────────────────────
-    const belowMinimum = ex.score < config.minimumScore;
-    if (belowMinimum && config.autoRejectLowCibil === true) {
+    // ── Decision bands, configured in Admin → CIBIL Settings ───────────────
+    // No thresholds are hardcoded here: the bands are read per application, so
+    // changing them in Admin takes effect on the next submission with no
+    // restart or redeploy.
+    const decision = decideByScore(ex.score, config);
+    const passStage = getNextStage(PENDING_CIBIL_STAGE);
+
+    logEvent("cibil_decision", {
+      applicationId: String(appDoc._id),
+      formId: appDoc.formId,
+      score: ex.score,
+      matchedRange: decision.matched ?? "pending",
+      configuredRange: decision.configuredRange,
+      nextStage: decision.matched === "reject" ? REJECTED_STAGE
+        : decision.matched === "pass" ? passStage
+        : PENDING_CIBIL_STAGE,
+    });
+
+    // Reject band. autoRejectLowCibil remains the existing master switch: when
+    // it is off, a reject-band score is held at Pending CIBIL for manual review.
+    if (decision.matched === "reject" && config.autoRejectLowCibil === true) {
       const reason = config.lowCibilRejectionReason || "Low CIBIL Score";
       await moveToRejected(appDoc, reason);
       await hist(
         "REJECTED",
-        `Auto Rejected — ${reason} (score ${ex.score} < minimum ${config.minimumScore})`,
+        `Auto Rejected — ${reason} (score ${ex.score} in reject range ${decision.configuredRange})`,
         "rejected"
       );
       return { dealerStatus: DEALER_STATUS.REJECTED, reason, message: LOW_CIBIL_MESSAGE };
     }
 
-    // ── Accepted → remains at Pending CIBIL (status pending) ───────────────
+    // Pass band → advance one step using the existing workflow progression.
+    if (decision.matched === "pass") {
+      appDoc.status = "pending";
+      appDoc.workflowStage = passStage;
+      appDoc.cibil.state = "passed";
+      appDoc.markModified("cibil");
+      await appDoc.save();
+      await hist(
+        "STAGE_CHANGED",
+        `CIBIL passed — score ${ex.score} in pass range ${decision.configuredRange}`,
+        passStage
+      );
+      return { dealerStatus: DEALER_STATUS.PENDING_CIBIL };
+    }
+
+    // Pending band, an unmatched score, or auto-reject disabled → Pending CIBIL.
     appDoc.status = "pending";
     appDoc.workflowStage = PENDING_CIBIL_STAGE;
     appDoc.cibil.state = "pending";

@@ -7,6 +7,8 @@
 import SystemSettings from "../models/SystemSettings.js";
 import { encrypt } from "../utils/secretCrypto.js";
 
+import { normalizeRanges, validateRanges, RANGE_ORDER } from "../utils/cibilRanges.js";
+
 const SETTINGS_KEY = "system";
 
 // Sentinel the frontend echoes back for an unchanged secret field.
@@ -23,6 +25,8 @@ function sanitizeCibil(cibil = {}) {
     autoRejectLowCibil:
       typeof cibil.autoRejectLowCibil === "boolean" ? cibil.autoRejectLowCibil : true,
     lowCibilRejectionReason: cibil.lowCibilRejectionReason || "Low CIBIL Score",
+    // Decision bands (defaulted for older documents).
+    ...normalizeRanges(cibil),
     // Secret presence flag — the value itself is never returned.
     apiKeySet: !!cibil.apiKey,
   };
@@ -92,6 +96,23 @@ export const updateCibilSettings = async (req, res) => {
       typeof body.apiKey === "string" && body.apiKey !== MASK ? body.apiKey.trim() : "";
     if (suppliedApiKey.length > 0) {
       current.apiKey = encrypt(suppliedApiKey);
+    }
+
+    // ── Decision bands ─────────────────────────────────────────────────────
+    // Only validated when the request actually carries them, so saving other
+    // fields alone cannot fail on ranges it never sent.
+    const suppliedRanges = RANGE_ORDER.filter((k) => body[k] !== undefined);
+    if (suppliedRanges.length > 0) {
+      const merged = normalizeRanges(current);
+      for (const key of suppliedRanges) {
+        const r = body[key] || {};
+        merged[key] = { min: Number(r.min), max: Number(r.max) };
+      }
+      const rangeErrors = validateRanges(merged);
+      if (rangeErrors.length > 0) {
+        return res.status(400).json({ success: false, error: rangeErrors.join(" "), errors: rangeErrors });
+      }
+      for (const key of RANGE_ORDER) current[key] = merged[key];
     }
 
     // ── Validation — both credentials are required ─────────────────────────
