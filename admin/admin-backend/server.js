@@ -14,6 +14,7 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 import creditNoteRoutes from "./routes/creditNoteRoutes.js";
 import fileRoutes from "./routes/fileRoutes.js";
 import cibilReportRoutes from "./routes/cibilReportRoutes.js";
+import underwritingReportRoutes from "./routes/underwritingReportRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import { secureHeaders, rateLimit } from "./middleware/security.js";
 import { logError } from "./utils/log.js";
@@ -138,6 +139,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/credit-notes", creditNoteRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/cibil", cibilReportRoutes);
+app.use("/api/underwriting", underwritingReportRoutes);
 
 // 404 handler
 app.use((req, res) => {
