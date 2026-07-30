@@ -7,7 +7,11 @@ import CreditNote from "../models/CreditNote.js";
 import Application from "../models/Application.js";
 import { createHistoryEntry } from "./formTrackingController.js";
 import { normalizeWorkflows } from "../utils/workflowConstants.js";
-import { generateCreditNotePdf } from "../utils/creditNotePdf.js";
+import { generateCreditUnderwritingPdf } from "../utils/creditUnderwritingPdf.js";
+import { buildUnderwritingModel } from "../utils/creditUnderwritingData.js";
+import CibilReport from "../models/CibilReport.js";
+import { absFromRel } from "../utils/fileStorage.js";
+import fsp from "fs/promises";
 import { creditNoteFilename } from "../utils/reportFilename.js";
 import { writeAppFile } from "../utils/fileStorage.js";
 import { logEvent } from "../utils/log.js";
@@ -101,27 +105,30 @@ export const completeCreditNote = async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // 2) Generate the PDF.
+    // 2) Generate the PDF from the normalised underwriting model, using the
+    //    same model the React renderer consumes so the two cannot diverge.
     const folder = safeFolder(app.formId || String(app._id));
-    const pdfBuffer = generateCreditNotePdf({
-      title: "Credit Note",
-      subtitle: `Application: ${app.formId || app._id}`,
-      rows: [
-        { label: "Customer Name", value: creditNote.customerName },
-        { label: "House Address", value: creditNote.houseAddress },
-        { label: "CIBIL Score", value: creditNote.cibilScore },
-        { label: "DPD Days", value: creditNote.dpdDays },
-        { label: "Enquiry Count", value: creditNote.enquiryCount },
-        { label: "Suit Filed", value: creditNote.suitFiled },
-        { label: "Write Off", value: creditNote.writeOff },
-        { label: "Total Overdue", value: creditNote.totalOverdue },
-        { label: "Total EMI Amount", value: creditNote.totalEmiAmount },
-        { label: "Total EMI Count", value: creditNote.totalEmiCount },
-        { label: "Distance From Branch", value: creditNote.distanceFromBranch },
-        { label: "Prepared By", value: staffName },
-        { label: "Date", value: new Date().toLocaleString() },
-      ],
+    let bureauRaw = null;
+    try {
+      const report = await CibilReport.findOne({ applicationId: app._id }).lean();
+      if (report) {
+        if (report.rawResponse !== null && report.rawResponse !== undefined) {
+          bureauRaw = report.rawResponse;
+        } else if (report.rawResponsePath) {
+          bureauRaw = JSON.parse(await fsp.readFile(absFromRel(report.rawResponsePath), "utf8"));
+        }
+      }
+    } catch (bureauErr) {
+      // The credit summary degrades to "Not Available"; never block the save.
+      console.warn("[creditNote] bureau data unavailable for the PDF:", bureauErr?.message);
+    }
+
+    const underwritingModel = buildUnderwritingModel({
+      app: app.toObject ? app.toObject() : app,
+      creditNote,
+      raw: bureauRaw,
     });
+    const pdfBuffer = generateCreditUnderwritingPdf(underwritingModel);
 
     // 3) Store the PDF in the application folder:
     //    uploads/applications/<APPNO>/credit-note.pdf  (relative path saved).
