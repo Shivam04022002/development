@@ -123,7 +123,8 @@ applications live in the Rejected module.
 ## Credit Note
 
 - **Location:** `controllers/creditNoteController.js`, `models/CreditNote.js`,
-  `utils/creditNotePdf.js`.
+  `utils/creditUnderwritingData.js` (normalised model), `utils/creditUnderwritingPdf.js`
+  (PDF renderer).
 - The final step of the Pending CIBIL stage. Only staff with the `pending_cibil`
   permission (or super-admin) may complete it.
 - **Update & Download** (`POST /api/credit-notes/:applicationId`):

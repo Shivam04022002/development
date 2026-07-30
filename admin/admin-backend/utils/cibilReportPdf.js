@@ -1,9 +1,8 @@
 // utils/cibilReportPdf.js
 //
-// Dependency-free multi-page PDF generator for the CIBIL report. Built the same
-// way as utils/creditNotePdf.js (standard Type1 fonts, no embedding, no npm
-// package) but with multi-page support and a monospace appendix so the stored
-// Xaler JSON can be included verbatim.
+// Dependency-free multi-page PDF generator for the CIBIL report: standard
+// Type1 fonts, no font embedding and no npm package, with multi-page support
+// and a monospace appendix so the stored Xaler JSON can be included verbatim.
 //
 // Nothing is written to disk — generateCibilReportPdf() returns a Buffer.
 

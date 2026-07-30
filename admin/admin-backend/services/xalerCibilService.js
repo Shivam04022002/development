@@ -327,18 +327,20 @@ export async function fetchCibilReport(applicant, config) {
 
       const data = await parseBody(res);
 
-      // TEMPORARY DEBUG: full vendor response, pretty-printed. The body carries
-      // applicant credit data only — the API key travels in the Authorization
-      // header and is never part of the response. Remove once parsing is
-      // confirmed in production (a single response is ~1 MB).
+      // Compact response summary. The complete body is already persisted by
+      // cibilProcessingService (CibilReport.rawResponse plus the raw-response
+      // .json file), so logging it here would only duplicate ~1 MB per request.
       try {
-        console.log(
-          `[xalerCibil] raw response (HTTP ${httpStatus}):
-` +
-          (typeof data === "object" ? JSON.stringify(data, null, 2) : String(data))
-        );
+        const size = typeof data === "object" ? JSON.stringify(data).length : String(data ?? "").length;
+        logEvent("cibil_response_body", {
+          httpStatus,
+          bytes: size,
+          topLevelKeys: data && typeof data === "object" ? Object.keys(data) : [],
+          status: typeof data?.status === "string" ? data.status : null,
+          message: typeof data?.message === "string" ? data.message.slice(0, 200) : null,
+        });
       } catch (logErr) {
-        console.warn("[xalerCibil] could not stringify response:", logErr?.message);
+        logWarn("cibil_response_body_unloggable", { error: logErr?.message });
       }
 
       // Non-object body → invalid.
