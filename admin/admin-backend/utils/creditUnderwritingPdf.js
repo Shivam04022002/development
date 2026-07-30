@@ -1,35 +1,43 @@
 // utils/creditUnderwritingPdf.js
 //
-// Server-side PDF for the Credit Underwriting Decision Report.
+// Credit Underwriting Decision Report — single A4 page, laid out to match the
+// approved reference document:
 //
-// Renders the SAME normalised model as the React renderer
-// (components/underwriting/CreditUnderwritingReport.jsx) and follows the same
-// design language: navy section bands, label/value tables, a coloured decision
-// block, A4 portrait with automatic page breaks and a footer on every page.
+//   centred logo -> SURJIT FINANCE -> tagline -> address -> orange rule
+//   -> CREDIT UNDERWRITING DECISION REPORT -> orange rule
+//   -> ten-row, two-column table (grey label column, white value column)
 //
-// Dependency-free, like utils/cibilReportPdf.js — the admin backend has no
-// headless browser and no PDF library, so the React component cannot be
-// rasterised on the server. This module is the server-side implementation of
-// that same design, driven by the identical model so the two cannot drift on
-// content.
-//
-// Presentation only: no business logic, no decisions, no calculations.
+// Presentation only. It consumes the normalised model from
+// utils/creditUnderwritingData.js and adds no sections, decisions or
+// calculations of its own. Dependency-free: standard Type1 fonts plus a
+// FlateDecode image XObject for the logo (see utils/pngEmbed.js).
 
-const PAGE_W = 595; // A4
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { pngToPdfImage } from "./pngEmbed.js";
+
+const PAGE_W = 595; // A4 points
 const PAGE_H = 842;
-const MX = 45; // side margin
-const TOP_Y = PAGE_H - 50;
-const BOTTOM_Y = 58;
+const MX = 45;
 const CONTENT_W = PAGE_W - MX * 2;
 
-const NAVY = [0.043, 0.122, 0.302]; // #0B1F4D
-const AMBER = [0.961, 0.62, 0.043]; // #F59E0B
-const GREY = [0.39, 0.45, 0.55];
-const LINE = [0.84, 0.87, 0.91];
-const BAND = [0.945, 0.961, 0.976];
-const GREEN = [0.086, 0.639, 0.29];
-const RED = [0.937, 0.267, 0.267];
-const SLATE = [0.28, 0.33, 0.41];
+const INK = [0.13, 0.13, 0.13];
+const GREY_TEXT = [0.42, 0.45, 0.5];
+const ORANGE = [0.937, 0.588, 0.129];
+const ORANGE_TEXT = [0.902, 0.494, 0.133];
+const BORDER = [0.867, 0.878, 0.898];
+const LABEL_BG = [0.976, 0.98, 0.984];
+
+// Table geometry, proportioned from the reference.
+const ROW_H = 26;
+const LABEL_W = Math.round(CONTENT_W * 0.395);
+const PAD_X = 12;
+
+const LOGO_W = 150; // points; height follows the source aspect ratio
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, "..", "assets", "logo-surjit.png");
 
 /** Escape a PDF literal string. */
 const esc = (s) =>
@@ -39,370 +47,205 @@ const esc = (s) =>
     .replace(/\)/g, "\\)")
     .replace(/[\r\n]+/g, " ");
 
-/** The standard fonts encode Latin-1; drop anything outside it. */
-const lat1 = (s) => String(s ?? "").replace(/[^\x20-\x7E\xA0-\xFF]/g, "?");
+/** The standard fonts encode Latin-1; the rupee sign is outside it. */
+const lat1 = (s) =>
+  String(s ?? "")
+    .replace(/₹/g, "Rs.")
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, "?");
 
-/** Approximate Helvetica width, in points, for wrapping. */
-const widthOf = (s, size) => String(s ?? "").length * size * 0.5;
-
-/** Wrap text to a pixel width, on word boundaries. */
-function wrap(str, size, maxW) {
-  const words = String(str ?? "").split(/\s+/).filter(Boolean);
-  if (!words.length) return [""];
-  const out = [];
-  let line = "";
-  for (const w of words) {
-    const next = line ? `${line} ${w}` : w;
-    if (widthOf(next, size) > maxW && line) {
-      out.push(line);
-      line = w;
-    } else {
-      line = next;
-    }
-  }
-  if (line) out.push(line);
-  return out;
-}
+// Per-font average advance factors, good enough for centring.
+const ADV = { H: 0.5, HB: 0.53, TB: 0.48 };
+const widthOf = (s, size, font = "H") => String(s ?? "").length * size * ADV[font];
 
 const dash = (v) => (v === null || v === undefined || v === "" ? "Not Available" : String(v));
 
 /** Indian digit grouping, matching the renderer's money() helper. */
 function money(n) {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "Not Available";
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return null;
   const i = String(Math.round(Number(n)));
   const last3 = i.slice(-3);
   const rest = i.slice(0, -3);
   return rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${last3}` : last3;
 }
 
-/** Page builder: text/rect primitives plus automatic page breaks. */
-class Doc {
-  constructor() {
-    this.pages = [];
-    this.buf = "";
-    this.y = TOP_Y;
+/** Rupee-prefixed amount, or "Not Available". */
+const rupees = (n) => {
+  const m = money(n);
+  return m === null ? "Not Available" : `Rs.${m}`;
+};
+
+/** Load and prepare the logo once per process; null if unavailable. */
+let logoCache;
+function getLogo() {
+  if (logoCache !== undefined) return logoCache;
+  try {
+    logoCache = pngToPdfImage(fs.readFileSync(LOGO_PATH));
+  } catch (err) {
+    console.warn("[creditUnderwritingPdf] logo unavailable, falling back to text:", err?.message);
+    logoCache = null;
   }
-
-  newPage() {
-    if (this.buf) this.pages.push(this.buf);
-    this.buf = "";
-    this.y = TOP_Y;
-  }
-
-  need(h) {
-    if (this.y - h < BOTTOM_Y) this.newPage();
-  }
-
-  rect(x, y, w, h, rgb) {
-    this.buf += `${rgb[0]} ${rgb[1]} ${rgb[2]} rg ${x} ${y} ${w} ${h} re f\n`;
-  }
-
-  line(x1, y1, x2, y2, rgb = LINE, w = 0.7) {
-    this.buf += `${w} w ${rgb[0]} ${rgb[1]} ${rgb[2]} RG ${x1} ${y1} m ${x2} ${y2} l S\n`;
-  }
-
-  /** Draw one line of text at an absolute position. */
-  at(x, y, str, { size = 9.5, bold = false, rgb = [0, 0, 0] } = {}) {
-    const f = bold ? "/F2" : "/F1";
-    this.buf +=
-      `BT ${f} ${size} Tf ${rgb[0]} ${rgb[1]} ${rgb[2]} rg 1 0 0 1 ${x} ${y} Tm (${esc(lat1(str))}) Tj ET\n`;
-  }
-
-  /** Navy section band, like the renderer's cr-h2. */
-  section(title, note = "") {
-    this.need(40);
-    this.y -= 6;
-    this.rect(MX, this.y - 14, CONTENT_W, 17, NAVY);
-    this.at(MX + 7, this.y - 9, String(title).toUpperCase(), { size: 9.5, bold: true, rgb: [1, 1, 1] });
-    if (note) {
-      this.at(PAGE_W - MX - 7 - widthOf(note, 8), this.y - 9, note, { size: 8, rgb: [0.85, 0.88, 0.93] });
-    }
-    this.y -= 26;
-  }
-
-  subheading(title) {
-    this.need(22);
-    this.at(MX, this.y, String(title).toUpperCase(), { size: 8.5, bold: true, rgb: NAVY });
-    this.y -= 13;
-  }
-
-  /** Label / value row. `col` 0 = left half, 1 = right half, undefined = full. */
-  kv(label, value, col) {
-    const half = (CONTENT_W - 16) / 2;
-    const x = col === 1 ? MX + half + 16 : MX;
-    const w = col === undefined ? CONTENT_W : half;
-    const labelW = col === undefined ? 150 : half * 0.52;
-    if (col !== 1) this.need(15);
-    const lines = wrap(dash(value), 9, w - labelW - 4);
-    this.at(x, this.y, label, { size: 9, rgb: GREY });
-    lines.forEach((ln, i) => this.at(x + labelW, this.y - i * 11, ln, { size: 9, bold: true }));
-    if (col !== 0) this.y -= 14 + (lines.length - 1) * 11;
-    return lines.length;
-  }
-
-  /** Two-column block of [label, value] pairs. */
-  kvGrid(rows) {
-    for (let i = 0; i < rows.length; i += 2) {
-      const a = rows[i];
-      const b = rows[i + 1];
-      const beforeY = this.y;
-      this.need(16);
-      this.kv(a[0], a[1], 0);
-      if (b) this.kv(b[0], b[1], 1);
-      else this.y -= 14;
-      if (this.y === beforeY) this.y -= 14;
-    }
-  }
-
-  /** Simple table with a shaded header row; repeats the header on a new page. */
-  table(head, rows, widths) {
-    const draw = () => {
-      this.need(24);
-      this.rect(MX, this.y - 12, CONTENT_W, 15, BAND);
-      let x = MX + 5;
-      head.forEach((h, i) => {
-        this.at(x, this.y - 8, String(h).toUpperCase(), { size: 8, bold: true, rgb: SLATE });
-        x += widths[i];
-      });
-      this.y -= 19;
-    };
-    draw();
-    for (const row of rows) {
-      const cells = row.map((c, i) => wrap(dash(c), 8.5, widths[i] - 8));
-      const h = Math.max(...cells.map((c) => c.length)) * 11 + 4;
-      if (this.y - h < BOTTOM_Y) {
-        this.newPage();
-        draw();
-      }
-      let x = MX + 5;
-      cells.forEach((lines, i) => {
-        lines.forEach((ln, j) => this.at(x, this.y - 3 - j * 11, ln, { size: 8.5 }));
-        x += widths[i];
-      });
-      this.y -= h;
-      this.line(MX, this.y + 3, PAGE_W - MX, this.y + 3);
-    }
-    this.y -= 6;
-  }
-
-  /** Bordered box for free-text remarks. */
-  box(h = 46) {
-    this.need(h + 6);
-    this.line(MX, this.y + 3, PAGE_W - MX, this.y + 3);
-    this.line(MX, this.y + 3 - h, PAGE_W - MX, this.y + 3 - h);
-    this.line(MX, this.y + 3, MX, this.y + 3 - h);
-    this.line(PAGE_W - MX, this.y + 3, PAGE_W - MX, this.y + 3 - h);
-    this.y -= h + 8;
-  }
-
-  finish() {
-    if (this.buf) this.pages.push(this.buf);
-    if (!this.pages.length) this.pages.push("");
-    return this.pages;
-  }
-}
-
-/** Footer with company line and page numbers, stamped on every page. */
-function stampFooters(pages, header) {
-  return pages.map((content, i) => {
-    const y = 40;
-    let s = content;
-    s += `0.7 w ${LINE[0]} ${LINE[1]} ${LINE[2]} RG ${MX} ${y + 12} m ${PAGE_W - MX} ${y + 12} l S\n`;
-    const left = `${header.companyName} - ${header.address}`;
-    const right = `Page ${i + 1} of ${pages.length}`;
-    s += `BT /F1 7.5 Tf ${GREY[0]} ${GREY[1]} ${GREY[2]} rg 1 0 0 1 ${MX} ${y} Tm (${esc(lat1(left))}) Tj ET\n`;
-    s += `BT /F1 7.5 Tf ${GREY[0]} ${GREY[1]} ${GREY[2]} rg 1 0 0 1 ${PAGE_W - MX - widthOf(right, 7.5)} ${y} Tm (${esc(right)}) Tj ET\n`;
-    return s;
-  });
-}
-
-/** Assemble page streams into a PDF buffer. */
-function assemble(pages) {
-  const objects = [];
-  const n = pages.length;
-  const first = 3;
-  const kids = [];
-  for (let i = 0; i < n; i++) kids.push(`${first + i * 2} 0 R`);
-  const fReg = first + n * 2;
-  const fBold = fReg + 1;
-
-  objects[0] = "<< /Type /Catalog /Pages 2 0 R >>";
-  objects[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${n} >>`;
-  pages.forEach((content, i) => {
-    const p = first + i * 2;
-    objects[p - 1] =
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
-      `/Resources << /Font << /F1 ${fReg} 0 R /F2 ${fBold} 0 R >> >> /Contents ${p + 1} 0 R >>`;
-    const bytes = Buffer.from(content, "latin1");
-    objects[p] = `<< /Length ${bytes.length} >>\nstream\n${content}\nendstream`;
-  });
-  objects[fReg - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-  objects[fBold - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
-
-  let pdf = "%PDF-1.4\n";
-  const offsets = [];
-  objects.forEach((o, i) => {
-    offsets[i] = Buffer.byteLength(pdf, "latin1");
-    pdf += `${i + 1} 0 obj\n${o}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(pdf, "latin1");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.forEach((o) => { pdf += `${String(o).padStart(10, "0")} 00000 n \n`; });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return Buffer.from(pdf, "latin1");
+  return logoCache;
 }
 
 /**
  * generateCreditUnderwritingPdf(model) → Buffer
- * `model` is the output of utils/creditUnderwritingData.js. Nothing is written
- * to disk here; the caller decides what to do with the buffer.
+ * `model` is the output of utils/creditUnderwritingData.js.
  */
 export function generateCreditUnderwritingPdf(model) {
   const m = model || {};
   const h = m.header || {};
-  const app = m.application || {};
   const cust = m.customer || {};
+  const app = m.application || {};
   const cs = m.creditSummary || {};
   const cn = m.creditNote || {};
-  const rem = m.remarks || {};
-  const dec = m.decision || {};
 
-  const d = new Doc();
+  const logo = getLogo();
+  let s = "";
 
-  // ── Letterhead ────────────────────────────────────────────────────────────
-  d.at(MX, d.y, h.companyName || "SURJIT FINANCE", { size: 18, bold: true, rgb: NAVY });
-  d.y -= 15;
-  d.at(MX, d.y, h.tagline || "", { size: 7.5, bold: true, rgb: AMBER });
-  d.y -= 11;
-  d.at(MX, d.y, h.address || "", { size: 8, rgb: GREY });
-  const stamp = `${dash(h.reportDate)} ${h.reportTime || ""}`.trim();
-  d.at(PAGE_W - MX - widthOf(stamp, 8), TOP_Y, stamp, { size: 8, rgb: GREY });
-  d.y -= 10;
-  d.rect(MX, d.y, CONTENT_W, 2, AMBER);
-  d.y -= 22;
+  const text = (x, y, str, { size = 9.5, font = "H", rgb = INK } = {}) => {
+    const f = font === "HB" ? "/F2" : font === "TB" ? "/F3" : "/F1";
+    s += `BT ${f} ${size} Tf ${rgb[0]} ${rgb[1]} ${rgb[2]} rg 1 0 0 1 ${x} ${y} Tm (${esc(lat1(str))}) Tj ET\n`;
+  };
+  const centre = (y, str, opts) => {
+    const w = widthOf(lat1(str), opts.size, opts.font || "H");
+    text((PAGE_W - w) / 2, y, str, opts);
+  };
+  const rect = (x, y, w, hh, rgb) => {
+    s += `${rgb[0]} ${rgb[1]} ${rgb[2]} rg ${x} ${y} ${w} ${hh} re f\n`;
+  };
+  const stroke = (x, y, w, hh, rgb = BORDER, lw = 0.7) => {
+    s += `${lw} w ${rgb[0]} ${rgb[1]} ${rgb[2]} RG ${x} ${y} ${w} ${hh} re S\n`;
+  };
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  let y = PAGE_H - 150;
+
+  if (logo) {
+    const lw = LOGO_W;
+    const lh = Math.round((logo.height / logo.width) * lw);
+    const lx = (PAGE_W - lw) / 2;
+    s += `q ${lw} 0 0 ${lh} ${lx} ${y} cm /Im0 Do Q\n`;
+    y -= 34;
+  } else {
+    y -= 6;
+  }
+
+  centre(y, "SURJIT FINANCE", { size: 23, font: "TB", rgb: [0, 0, 0] });
+  y -= 20;
+  centre(y, h.tagline || "TODAY. TOMORROW. TOGETHER.", { size: 8, font: "HB", rgb: ORANGE_TEXT });
+  y -= 15;
+  centre(y, h.address || "", { size: 8.5, font: "H", rgb: GREY_TEXT });
+  y -= 16;
+
+  rect(MX, y, CONTENT_W, 1.6, ORANGE);
+  y -= 30;
 
   const title = h.title || "CREDIT UNDERWRITING DECISION REPORT";
-  d.at((PAGE_W - widthOf(title, 13)) / 2, d.y, title, { size: 13, bold: true, rgb: NAVY });
-  d.y -= 22;
+  centre(y, title, { size: 13.5, font: "HB", rgb: [0, 0, 0] });
+  y -= 12;
+  rect(MX, y, CONTENT_W, 1.6, ORANGE);
+  y -= 26;
 
-  // ── Application information ────────────────────────────────────────────────
-  d.section("Application Information");
-  d.kvGrid([
-    ["Application Number", dash(app.applicationNo)],
-    ["Customer Name", dash(app.customerName)],
-    ["Branch", dash(app.branch)],
-    ["Dealer", dash(app.dealer)],
-    ["Product", dash(app.product)],
-    ["Loan Amount", money(app.loanAmount)],
-    ["Tenure", app.tenureMonths ? `${app.tenureMonths} months` : "Not Available"],
-    ["Report Date", dash(h.reportDate)],
-    ["Workflow Stage", dash(app.workflowStage)],
-    ["Prepared By", dash(app.preparedBy)],
-  ]);
+  // ── Table: exactly the ten reference rows ─────────────────────────────────
+  const emiCombined = (() => {
+    const amt = money(cn.totalEmiAmount);
+    const cnt = cn.totalEmiCount;
+    if (amt === null && (cnt === null || cnt === undefined)) return "Not Available";
+    return `Rs.${amt === null ? "0" : amt} / ${cnt === null || cnt === undefined ? "0" : cnt} months`;
+  })();
 
-  // ── Customer information ──────────────────────────────────────────────────
-  d.section("Customer Information");
-  d.kvGrid([
-    ["Name", dash(cust.name)],
-    ["Father / Husband Name", dash(cust.fatherName)],
-    ["Date of Birth", dash(cust.dob)],
-    ["Age", cust.age === null || cust.age === undefined ? "Not Available" : `${cust.age} years`],
-    ["Gender", dash(cust.gender)],
-    ["PAN", dash(cust.pan)],
-    ["Mobile", dash(cust.mobile)],
-    ["Email", dash(cust.email)],
-    ["Occupation", dash(cust.occupation)],
-  ]);
-  d.kv("Address", dash(cust.address));
-  d.y -= 4;
+  const rows = [
+    ["Customer Name", dash(cust.name || app.customerName), false],
+    ["Address", dash(cust.address), false],
+    ["CIBIL Score", cs.score === null || cs.score === undefined ? "Not Available" : String(cs.score), false],
+    ["DPD Days (Last 6 Months)", cn.dpdDays === null || cn.dpdDays === undefined ? "Not Available" : String(cn.dpdDays), false],
+    ["Enquiry (Last 3 months)", cn.enquiryCount === null || cn.enquiryCount === undefined ? "Not Available" : String(cn.enquiryCount), false],
+    ["Suit Filled", dash(cn.suitFiled), false],
+    ["Write-Off", dash(cn.writeOff), false],
+    ["Total Overdue", rupees(cn.totalOverdue), true],
+    ["Total EMI Amount / Count", emiCombined, false],
+    ["Distance From Branch", cn.distanceFromBranch === null || cn.distanceFromBranch === undefined
+      ? "Not Available" : `${cn.distanceFromBranch} KM`, false],
+  ];
 
-  // ── Credit summary ────────────────────────────────────────────────────────
-  d.section("Credit Summary", cs.hasBureauData ? "" : "no bureau report on file");
-  d.kvGrid([
-    ["CIBIL Score", cs.score === null || cs.score === undefined ? "Not Available" : String(cs.score)],
-    ["Total Accounts", dash(cs.totalAccounts)],
-    ["Active Accounts", dash(cs.activeAccounts)],
-    ["Closed Accounts", dash(cs.closedAccounts)],
-    ["Current Balance", money(cs.currentBalance)],
-    ["High Credit", money(cs.highCredit)],
-    ["Total Overdue", money(cs.totalOverdue)],
-    ["Recent Enquiries (12m)", dash(cs.recentEnquiries)],
-  ]);
+  const tableTop = y;
+  rows.forEach(([label, value, accent], i) => {
+    const rowY = tableTop - (i + 1) * ROW_H;
+    // Grey label cell, white value cell, then borders on top.
+    rect(MX, rowY, LABEL_W, ROW_H, LABEL_BG);
+    rect(MX + LABEL_W, rowY, CONTENT_W - LABEL_W, ROW_H, [1, 1, 1]);
+    stroke(MX, rowY, LABEL_W, ROW_H);
+    stroke(MX + LABEL_W, rowY, CONTENT_W - LABEL_W, ROW_H);
 
-  // ── Credit note ───────────────────────────────────────────────────────────
-  d.section("Credit Note", cn.recorded ? "" : "not recorded");
-  d.table(
-    ["Parameter", "Value"],
-    [
-      ["DPD Days (Last 6 Months)", cn.dpdDays === null || cn.dpdDays === undefined ? null : String(cn.dpdDays)],
-      ["Enquiries (Last 3 Months)", cn.enquiryCount === null || cn.enquiryCount === undefined ? null : String(cn.enquiryCount)],
-      ["Suit Filed", cn.suitFiled],
-      ["Write-Off", cn.writeOff],
-      ["Total Overdue", cn.totalOverdue === null || cn.totalOverdue === undefined ? null : money(cn.totalOverdue)],
-      ["Total EMI Amount", cn.totalEmiAmount === null || cn.totalEmiAmount === undefined ? null : money(cn.totalEmiAmount)],
-      ["Total EMI Count", cn.totalEmiCount === null || cn.totalEmiCount === undefined ? null : `${cn.totalEmiCount} months`],
-      ["Distance From Branch", cn.distanceFromBranch === null || cn.distanceFromBranch === undefined ? null : `${cn.distanceFromBranch} KM`],
-    ],
-    [300, CONTENT_W - 300]
-  );
-
-  // ── Remarks ───────────────────────────────────────────────────────────────
-  d.section("Remarks");
-  d.subheading("Credit Officer Remarks");
-  if (rem.creditOfficer) {
-    wrap(rem.creditOfficer, 9, CONTENT_W - 10).forEach((ln) => {
-      d.need(13);
-      d.at(MX + 3, d.y, ln, { size: 9 });
-      d.y -= 12;
+    const baseline = rowY + (ROW_H - 9.5) / 2 + 1.5;
+    text(MX + PAD_X, baseline, label, { size: 9.5, font: "HB", rgb: INK });
+    text(MX + LABEL_W + PAD_X, baseline, value, {
+      size: 9.5,
+      font: "HB",
+      rgb: accent ? ORANGE_TEXT : INK,
     });
-    d.y -= 4;
-  } else {
-    d.box(42);
-  }
-  d.subheading("Underwriter Remarks");
-  if (rem.underwriter) {
-    wrap(rem.underwriter, 9, CONTENT_W - 10).forEach((ln) => {
-      d.need(13);
-      d.at(MX + 3, d.y, ln, { size: 9 });
-      d.y -= 12;
-    });
-    d.y -= 4;
-  } else {
-    d.box(42);
-  }
-
-  // ── Decision (stored value only) ──────────────────────────────────────────
-  d.section("Decision");
-  const value = dash(dec.value);
-  const tint =
-    dec.value === "APPROVED" ? [0.94, 0.99, 0.96]
-      : dec.value === "REJECTED" ? [0.996, 0.949, 0.949]
-      : [0.973, 0.98, 0.988];
-  const ink = dec.value === "APPROVED" ? GREEN : dec.value === "REJECTED" ? RED : SLATE;
-  d.need(52);
-  d.rect(MX, d.y - 34, CONTENT_W, 40, tint);
-  d.rect(MX, d.y - 34, 4, 40, ink);
-  d.at(MX + 14, d.y - 2, "APPLICATION DECISION", { size: 7.5, bold: true, rgb: GREY });
-  d.at(MX + 14, d.y - 22, value, { size: 17, bold: true, rgb: ink });
-  d.y -= 46;
-  d.kvGrid([["Workflow Stage", dash(dec.workflowStage)], ["Status", dash(dec.status)]]);
-
-  // ── Disclaimer ────────────────────────────────────────────────────────────
-  d.y -= 4;
-  d.subheading("Disclaimer");
-  const disclaimer =
-    `This report is prepared by ${h.companyName || "Surjit Finance"} for internal record. It sets out ` +
-    "information supplied by the applicant and the dealer together with credit bureau data retrieved " +
-    "at the time of the enquiry, and the decision recorded against the application. Values shown as " +
-    "Not Available were not recorded in the system. The report states existing information only; it " +
-    "does not assess risk or make a lending recommendation.";
-  wrap(disclaimer, 7.5, CONTENT_W).forEach((ln) => {
-    d.need(11);
-    d.at(MX, d.y, ln, { size: 7.5, rgb: GREY });
-    d.y -= 10;
   });
 
-  return assemble(stampFooters(d.finish(), h));
+  // ── Assemble ──────────────────────────────────────────────────────────────
+  const objects = [];
+  const hasLogo = !!logo;
+  // 1 catalog, 2 pages, 3 page, 4 contents, 5-7 fonts, [8 image, 9 smask]
+  const O_IMG = 8;
+  const O_SMASK = 9;
+
+  const xobj = hasLogo ? `/XObject << /Im0 ${O_IMG} 0 R >>` : "";
+  objects[0] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objects[1] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+  objects[2] =
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
+    `/Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> ${xobj} >> /Contents 4 0 R >>`;
+  const bytes = Buffer.from(s, "latin1");
+  objects[3] = `<< /Length ${bytes.length} >>\nstream\n${s}\nendstream`;
+  objects[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objects[5] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+  objects[6] = "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>";
+
+  const binaries = {};
+  if (hasLogo) {
+    const smask = logo.mask ? ` /SMask ${O_SMASK} 0 R` : "";
+    objects[O_IMG - 1] =
+      `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} ` +
+      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode ` +
+      `/Length ${logo.image.length}${smask} >>`;
+    binaries[O_IMG] = logo.image;
+    if (logo.mask) {
+      objects[O_SMASK - 1] =
+        `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} ` +
+        `/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode ` +
+        `/Length ${logo.mask.length} >>`;
+      binaries[O_SMASK] = logo.mask;
+    }
+  }
+
+  const chunks = [];
+  let offset = 0;
+  const push = (buf) => { chunks.push(buf); offset += buf.length; };
+
+  push(Buffer.from("%PDF-1.4\n", "latin1"));
+  const offsets = [];
+  for (let i = 0; i < objects.length; i++) {
+    const num = i + 1;
+    offsets[i] = offset;
+    if (binaries[num]) {
+      push(Buffer.from(`${num} 0 obj\n${objects[i]}\nstream\n`, "latin1"));
+      push(binaries[num]);
+      push(Buffer.from("\nendstream\nendobj\n", "latin1"));
+    } else {
+      push(Buffer.from(`${num} 0 obj\n${objects[i]}\nendobj\n`, "latin1"));
+    }
+  }
+  const xrefPos = offset;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((o) => { xref += `${String(o).padStart(10, "0")} 00000 n \n`; });
+  xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF`;
+  push(Buffer.from(xref, "latin1"));
+
+  return Buffer.concat(chunks);
 }
 
 export default { generateCreditUnderwritingPdf };
