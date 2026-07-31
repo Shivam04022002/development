@@ -14,6 +14,10 @@ const approvedApplicationSchema = new mongoose.Schema(
     dealerDetails: Object, // snapshot (email, branch, district, name)
     status: { type: String, default: "approved" },
     workflowStage: { type: String, default: "disbursement" },
+    // Dedicated, immutable approval timestamp. Unlike the generic `updatedAt`
+    // (which timestamps:true can rewrite on any later save), this is set once at
+    // approval and is the authoritative source for "Processing Days" in exports.
+    approvedAt: { type: Date },
     history: [
       {
         updatedBy: String,

@@ -75,20 +75,73 @@ const getUpdatedTs = (app, status) =>
     ? (app?.rejection?.rejectedAt || app?.updatedAt)
     : app?.updatedAt;
 
-const buildRows = (applications, status) =>
-  applications.map((app) => ({
-    "Application ID": app?.formId || app?._id || "—",
-    "Applicant Name": getApplicantName(app),
-    Branch: getBranch(app),
-    "Dealer Name": getDealerName(app),
-    "Mobile Number": getMobile(app),
-    "Vehicle Name": getVehicle(app),
-    Status: status.charAt(0).toUpperCase() + status.slice(1),
-    // Original dealer submission date (see getCreatedTs) — the same value the
-    // table's Created column shows.
-    "Created Date": formatDate(getCreatedTs(app)),
-    "Updated Date": formatDate(getUpdatedTs(app, status)),
-  }));
+// Shared helper — whole-calendar-day difference between two dates.
+//   • Accepts a Date or ISO string.
+//   • Ignores hours/minutes/seconds (compares calendar dates only).
+//   • Returns a non-negative integer day difference (0 when same day).
+//   • Never returns a negative value.
+//   • Returns null for missing or invalid dates.
+const calculateProcessingDays = (startDate, endDate) => {
+  if (!startDate || !endDate) return null;
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+  const startMidnight = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endMidnight = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  const diff = Math.floor((endMidnight - startMidnight) / 86400000);
+  return diff < 0 ? 0 : diff;
+};
+
+// Immutable workflow-completion timestamps for the Processing Days calc.
+// These must NEVER drift if the record is edited after the workflow finishes,
+// so they read the DEDICATED workflow field — not the generic Mongo `updatedAt`.
+
+// Rejected: the rejection time lives in the nested `rejection.rejectedAt` field,
+// set once at rejection and never rewritten by timestamp bookkeeping. If a legacy
+// record lacks it, return null (-> "N/A") rather than a drift-prone updatedAt.
+const getRejectionTs = (app) => app?.rejection?.rejectedAt || null;
+
+// Approved: `approvedAt` is the dedicated, immutable approval timestamp, set once
+// when the application moves into the approved collection. The schema also carries
+// the generic `updatedAt` ({ timestamps: true }), which any later save rewrites, so
+// it is only a fallback for legacy records approved before `approvedAt` existed —
+// which the backfill script fills in.
+const getApprovalTs = (app) =>
+  app?.approvedAt || app?.disbursedAt || app?.updatedAt || null;
+
+// End date for the Processing Days calculation, per business rule:
+//   approved -> approval timestamp   (getApprovalTs — dedicated field, else updatedAt)
+//   rejected -> rejection timestamp  (rejection.rejectedAt — dedicated, immutable)
+//   pending  -> exportDate           (computed once per export, passed in)
+const getProcessingEndTs = (app, status, exportDate) => {
+  if (status === "pending") return exportDate;
+  if (status === "rejected") return getRejectionTs(app);
+  return getApprovalTs(app);
+};
+
+const buildRows = (applications, status, exportDate) =>
+  applications.map((app) => {
+    const createdTs = getCreatedTs(app);
+    const days = calculateProcessingDays(
+      createdTs,
+      getProcessingEndTs(app, status, exportDate)
+    );
+    return {
+      "Application ID": app?.formId || app?._id || "—",
+      "Applicant Name": getApplicantName(app),
+      Branch: getBranch(app),
+      "Dealer Name": getDealerName(app),
+      "Mobile Number": getMobile(app),
+      "Vehicle Name": getVehicle(app),
+      Status: status.charAt(0).toUpperCase() + status.slice(1),
+      // Original dealer submission date (see getCreatedTs) — the same value the
+      // table's Created column shows.
+      "Created Date": formatDate(createdTs),
+      // New column — immediately after Created Date.
+      "Processing Days": days === null ? "N/A" : days,
+      "Updated Date": formatDate(getUpdatedTs(app, status)),
+    };
+  });
 
 const COL_WIDTHS = [
   { wch: 20 }, // Application ID
@@ -99,6 +152,7 @@ const COL_WIDTHS = [
   { wch: 25 }, // Vehicle Name
   { wch: 12 }, // Status
   { wch: 24 }, // Created Date
+  { wch: 16 }, // Processing Days
   { wch: 24 }, // Updated Date
 ];
 
@@ -116,7 +170,9 @@ export const exportApplicationsToExcel = (applications, status, dateFrom = null,
     return;
   }
 
-  const rows = buildRows(applications, status);
+  // Compute the export date ONCE and reuse it for every pending row.
+  const exportDate = new Date();
+  const rows = buildRows(applications, status, exportDate);
   const ws = XLSX.utils.json_to_sheet(rows);
   ws["!cols"] = COL_WIDTHS;
 
@@ -138,8 +194,11 @@ export const exportAllToExcel = (pendingApps, approvedApps, rejectedApps, dateFr
 
   const wb = XLSX.utils.book_new();
 
+  // Compute the export date ONCE and reuse it for every pending row across sheets.
+  const exportDate = new Date();
+
   const addSheet = (apps, status) => {
-    const rows = buildRows(apps || [], status);
+    const rows = buildRows(apps || [], status, exportDate);
     const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Application ID": "No data" }]);
     ws["!cols"] = COL_WIDTHS;
     XLSX.utils.book_append_sheet(wb, ws, status.charAt(0).toUpperCase() + status.slice(1));

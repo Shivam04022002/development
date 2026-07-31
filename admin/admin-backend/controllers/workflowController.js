@@ -484,6 +484,8 @@ export const updateWorkflowStage = async (req, res) => {
         dealerDetails: app.dealerDetails || undefined,
         status: "approved",
         workflowStage: next,
+        createdAt: app.createdAt, // original submission date, never the approval time
+        approvedAt: new Date(),   // dedicated, immutable approval timestamp (source for Processing Days)
         history: app.history,
       });
     }
@@ -578,7 +580,8 @@ async function approveApplicationCore(id, admin, note) {
       status: "approved",
       workflowStage: "disbursement",
       createdAt: app.createdAt,   // original submission date
-      updatedAt: new Date(),      // approval time
+      updatedAt: new Date(),      // approval time (generic; timestamps:true may rewrite on later saves)
+      approvedAt: new Date(),     // dedicated, immutable approval timestamp (source for Processing Days)
       history: [
         ...(app.history || []),
         {
@@ -808,7 +811,7 @@ export const getApprovedApplications = async (req, res) => {
 
     const [approvedApps, total] = await Promise.all([
       ApprovedApplication.find(filter)
-        .select("formId applicant dealerDetails status workflowStage createdAt updatedAt")
+        .select("formId applicant dealerDetails status workflowStage createdAt updatedAt approvedAt")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
