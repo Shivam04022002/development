@@ -1,36 +1,49 @@
 import React from "react";
-import { show, money } from "./format";
+import { show } from "./format";
+import { inr } from "./currency";
 
-/** Calculated account totals — accounts / balances / opened dates. */
+/**
+ * Calculated account totals in one box, split into the bureau's three
+ * groups by vertical rules: accounts, balances, opened dates.
+ */
 export default function AccountSummary({ summary }) {
-  const g = [
+  const groups = [
     ["Accounts", [
       ["Total", show(summary.total)],
-      ["Zero Balance", show(summary.zeroBalance)],
+      ["Zero balance", show(summary.zeroBalance)],
       ["Overdue", show(summary.overdueCount)],
     ]],
     ["Balances", [
-      ["High Credit / Sanctioned", money(summary.highCreditTotal)],
-      ["Current Balance", money(summary.currentBalanceTotal)],
-      ["Overdue Amount", money(summary.overdueTotal)],
+      ["High Cr/Sanc. Amt", inr(summary.highCreditTotal)],
+      ["Current", inr(summary.currentBalanceTotal)],
+      ["Overdue", inr(summary.overdueTotal)],
     ]],
-    ["Account Opened", [
+    ["Account Opened Date", [
       ["Recent", show(summary.recentOpened)],
       ["Oldest", show(summary.oldestOpened)],
     ]],
   ];
+
   return (
     <section className="cr-section">
       <h2 className="cr-h2">Consumer Account Summary</h2>
-      <div className="cr-grid-3">
-        {g.map(([title, rows]) => (
-          <div className="cr-panel" key={title}>
-            <h3 className="cr-h3">{title}</h3>
-            <table className="cr-kv-table"><tbody>
-              {rows.map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}
-            </tbody></table>
-          </div>
-        ))}
+      <div className="cr-box">
+        <div className="cr-summary-grid">
+          {groups.map(([title, rows]) => (
+            <div key={title}>
+              <h4 className="cr-h4">{title}</h4>
+              <div className="cr-summary-row">
+                {rows.map(([k, v]) => (
+                  <React.Fragment key={k}>
+                    <div className="cr-k">{k}</div>
+                    <div className="cr-colon">:</div>
+                    <div className="cr-v">{v}</div>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );

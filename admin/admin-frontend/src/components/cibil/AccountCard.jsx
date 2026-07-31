@@ -1,59 +1,89 @@
 import React from "react";
-import { show, money, rate } from "./format";
+import { show, rate } from "./format";
+import { Fields, Inline, Pipe, StatusCorner } from "./ui";
+import { inr } from "./currency";
 import DPDGrid from "./DPDGrid";
 
-/** One tradeline: header strip, three-column detail, payment history. */
+/**
+ * One tradeline, laid out as the bureau does it: an "ACCOUNT INFORMATION"
+ * strip carrying the account dates and a status corner flag, a three-column
+ * body (account / amounts / status), then the payment history block.
+ */
 export default function AccountCard({ account }) {
   const a = account;
-  const cols = [
-    ["Account", [
-      ["Type", show(a.accountType)],
-      ["Member Name", show(a.memberName)],
-      ["Account Number", show(a.accountNumber)],
-      ["Ownership", show(a.ownership)],
-      ["Collateral", show(a.collateralType)],
-    ]],
-    ["Amounts", [
-      ["Sanctioned", money(a.sanctionedAmount)],
-      ["Current Balance", money(a.currentBalance)],
-      ["Overdue", money(a.overdueAmount)],
-      ["Actual Payment", money(a.actualPayment)],
-      ["Credit Limit", money(a.creditLimit)],
-    ]],
-    ["Status", [
-      ["Payment Frequency", show(a.paymentFrequency)],
-      ["Repayment Tenure", show(a.repaymentTenure)],
-      ["Interest Rate", rate(a.interestRate, "%")],
-      ["EMI", money(a.emi)],
-      ["Written Off", money(a.writtenOffTotal)],
-    ]],
+  const active = a.status === "ACTIVE";
+
+  const accountCol = [
+    ["Type", show(a.accountType)],
+    ["Member Name", show(a.memberName)],
+    ["Account Number", show(a.accountNumber)],
+    ["Ownership", show(a.ownership)],
   ];
+  // The bureau splits the amounts block into two sub-columns: the money on the
+  // left, the repayment terms on the right.
+  const amountsCol = [
+    ["Sanctioned Amount", inr(a.sanctionedAmount)],
+    ["Current Balance", inr(a.currentBalance)],
+    ["Overdue", inr(a.overdueAmount)],
+    ["Actual Payment", inr(a.actualPayment)],
+    ["Credit Limit", inr(a.creditLimit)],
+  ];
+  const termsCol = [
+    ["Payment Frequency", show(a.paymentFrequency)],
+    ["Repayment Tenure", show(a.repaymentTenure)],
+    ["Interest Rate", rate(a.interestRate)],
+    ["EMI", inr(a.emi)],
+    ["Written Off", inr(a.writtenOffTotal)],
+    ["Collateral Type", show(a.collateralType)],
+  ];
+
   return (
-    <article className="cr-account">
-      <div className="cr-account-head">
-        <span className="cr-account-no">{a.index}. ACCOUNT</span>
-        <span className={a.status === "ACTIVE" ? "cr-badge cr-badge-on" : "cr-badge cr-badge-off"}>
+    <>
+      <p className="cr-account-index">{a.index}. ACCOUNT</p>
+      <article className="cr-account">
+        <div className="cr-account-strip">
+          <span className="cr-strip-title">Account Information</span>
+          <Inline label="Date Opened" value={show(a.dateOpened)} />
+          <Pipe />
+          <Inline label="Date Closed" value={show(a.dateClosed)} />
+          <Pipe />
+          <Inline label="Date Reported & Certified" value={show(a.dateReported)} />
+        </div>
+        <span className={active ? "cr-status cr-status-on" : "cr-status cr-status-off"}>
           {a.status}
         </span>
-      </div>
-      <div className="cr-account-dates">
-        <span>Date Opened: {show(a.dateOpened)}</span>
-        <span>Date Closed: {show(a.dateClosed)}</span>
-        <span>Date Reported: {show(a.dateReported)}</span>
-        <span>Last Payment: {show(a.lastPayment)}</span>
-      </div>
-      <div className="cr-grid-3">
-        {cols.map(([title, rows]) => (
-          <div key={title}>
-            <h4 className="cr-h4">{title}</h4>
-            <table className="cr-kv-table"><tbody>
-              {rows.map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}
-            </tbody></table>
+        <StatusCorner active={active} />
+
+        <div className="cr-account-body">
+          <div>
+            <h4 className="cr-h4">Account</h4>
+            <Fields rows={accountCol} />
           </div>
-        ))}
-      </div>
-      <h4 className="cr-h4">Days Past Due / Asset Classification</h4>
-      <DPDGrid dpd={a.dpd} />
-    </article>
+          <div>
+            <h4 className="cr-h4">Amounts</h4>
+            <div className="cr-amounts-grid">
+              <Fields rows={amountsCol} />
+              <Fields rows={termsCol} />
+            </div>
+          </div>
+          <div>
+            <h4 className="cr-h4">Status</h4>
+            <div className="cr-val">{show(a.accountCondition)}</div>
+          </div>
+        </div>
+
+        <div className="cr-account-dpd">
+          <div className="cr-dpd-strip">
+            <span className="cr-strip-title">Days Past Due / Asset Classification</span>
+            <Inline label="Start Date" value={show(a.dpd?.startDate)} />
+            <Pipe />
+            <Inline label="End Date" value={show(a.dpd?.endDate)} />
+            <Pipe />
+            <Inline label="Last Payment" value={show(a.lastPayment)} />
+          </div>
+          <DPDGrid dpd={a.dpd} />
+        </div>
+      </article>
+    </>
   );
 }

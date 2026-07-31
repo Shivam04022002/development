@@ -1,7 +1,7 @@
 import React from "react";
 import { show } from "./format";
 
-/** Calculated enquiry buckets. */
+/** Calculated enquiry buckets — a single banded row, as the bureau prints it. */
 export default function EnquirySummary({ summary }) {
   const cells = [
     ["Total Enquiries", summary.total],
@@ -13,10 +13,12 @@ export default function EnquirySummary({ summary }) {
   return (
     <section className="cr-section">
       <h2 className="cr-h2">Enquiry Summary</h2>
-      <table className="cr-table cr-table-compact">
-        <thead><tr>{cells.map(([k]) => <th key={k}>{k}</th>)}</tr></thead>
-        <tbody><tr>{cells.map(([k, v]) => <td key={k}>{show(v)}</td>)}</tr></tbody>
-      </table>
+      <div className="cr-box cr-box-flush">
+        <table className="cr-table">
+          <thead><tr>{cells.map(([k]) => <th key={k}>{k}</th>)}</tr></thead>
+          <tbody><tr>{cells.map(([k, v]) => <td key={k}>{show(v)}</td>)}</tr></tbody>
+        </table>
+      </div>
     </section>
   );
 }

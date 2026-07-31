@@ -1,41 +1,42 @@
 import React from "react";
 import { show, NA, DASH } from "./format";
+import { Fields } from "./ui";
 
-/** Two-column consumer identity block. */
+/**
+ * Consumer identity box — two field columns, identity on the left and
+ * identifiers on the right, in the bureau's field order.
+ */
 export default function ConsumerInformation({ consumer }) {
   const id = consumer.identification;
+  const address = consumer.addresses.length ? consumer.addresses[0].line : null;
+
   const left = [
     ["Consumer Name", show(consumer.name)],
-    ["Date of Birth", show(consumer.dob)],
+    ["DOB", show(consumer.dob)],
     ["Age", show(consumer.age)],
+    ["Telephone No.", consumer.telephones.length ? consumer.telephones[0].number : DASH],
+    ["Email ID", consumer.emails.length ? consumer.emails[0] : DASH],
     ["Gender", show(consumer.gender)],
-    ["Telephone", consumer.telephones.length ? consumer.telephones[0].number : DASH],
-    ["Email", consumer.emails.length ? consumer.emails[0] : DASH],
+    ["Address", show(address)],
   ];
   const right = [
     ["PAN", show(id.pan)],
-    ["Aadhaar (UID)", show(id.aadhaar, NA)],
+    ["Driving Licence No", show(id.drivingLicence, NA)],
     ["Voter ID", show(id.voterId)],
     ["Passport No.", show(id.passport, NA)],
-    ["Driving Licence", show(id.drivingLicence, NA)],
+    ["Aadhaar Number (UID)", show(id.aadhaar, NA)],
     ["CKYC", show(id.ckyc)],
   ];
-  const address = consumer.addresses.length ? consumer.addresses[0].line : null;
 
   return (
     <section className="cr-section">
       <h2 className="cr-h2">Consumer Information</h2>
-      <div className="cr-grid-2">
-        <table className="cr-kv-table"><tbody>
-          {left.map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}
-        </tbody></table>
-        <table className="cr-kv-table"><tbody>
-          {right.map(([k, v]) => <tr key={k}><th>{k}</th><td>{v}</td></tr>)}
-        </tbody></table>
+      <div className="cr-box">
+        <div className="cr-grid-2">
+          <Fields rows={left} />
+          <Fields rows={right} />
+        </div>
       </div>
-      <table className="cr-kv-table cr-kv-wide"><tbody>
-        <tr><th>Address</th><td>{show(address)}</td></tr>
-      </tbody></table>
     </section>
   );
 }
