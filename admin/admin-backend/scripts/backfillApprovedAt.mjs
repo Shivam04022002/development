@@ -61,14 +61,19 @@ async function main() {
   console.log(`Missing approvedAt:                  ${missing}`);
   console.log(`  ...of which also lack updatedAt:   ${missingUpdatedAt} (cannot backfill; left as-is)`);
 
+  const backfillable = missing - missingUpdatedAt;
+
   if (DRY_RUN) {
-    console.log("\nDry run — no changes written.");
+    console.log(`\nWould backfill approvedAt on ${backfillable} record(s).`);
+    console.log("Dry run — no changes written.");
+    summary({ scanned: total, updated: 0, skipped: total });
     await mongoose.disconnect();
     return;
   }
 
   if (missing === 0) {
     console.log("\nNothing to backfill.");
+    summary({ scanned: total, updated: 0, skipped: total });
     await mongoose.disconnect();
     return;
   }
@@ -84,6 +89,12 @@ async function main() {
 
   const remaining = await coll.countDocuments({ approvedAt: { $exists: false } });
   console.log(`Remaining without approvedAt: ${remaining}`);
+
+  summary({
+    scanned: total,
+    updated: res.modifiedCount,
+    skipped: total - res.modifiedCount,
+  });
 
   await mongoose.disconnect();
   console.log("Done.");
