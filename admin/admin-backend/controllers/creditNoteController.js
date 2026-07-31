@@ -128,7 +128,7 @@ export const completeCreditNote = async (req, res) => {
       creditNote,
       raw: bureauRaw,
     });
-    const pdfBuffer = generateCreditUnderwritingPdf(underwritingModel);
+    const pdfBuffer = await generateCreditUnderwritingPdf(underwritingModel);
 
     // 3) Store the PDF in the application folder:
     //    uploads/applications/<APPNO>/credit-note.pdf  (relative path saved).
