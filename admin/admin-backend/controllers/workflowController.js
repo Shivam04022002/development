@@ -475,7 +475,11 @@ export const updateWorkflowStage = async (req, res) => {
 
     const exists = await ApprovedApplication.findOne({ formId: app.formId }).lean();
     if (!exists) {
-      await ApprovedApplication.create({
+      // Preserve the original submission date as createdAt while stamping the
+      // approval time as updatedAt. When createdAt is set explicitly, Mongoose 8
+      // mirrors it onto updatedAt and ignores an explicit updatedAt on a normal
+      // save; save({ timestamps: false }) lets us set both deterministically.
+      const approvedDoc = new ApprovedApplication({
         formId: app.formId,
         applicant: app.applicant,
         coApplicant: app.coApplicant,
@@ -484,10 +488,12 @@ export const updateWorkflowStage = async (req, res) => {
         dealerDetails: app.dealerDetails || undefined,
         status: "approved",
         workflowStage: next,
-        createdAt: app.createdAt, // original submission date, never the approval time
-        approvedAt: new Date(),   // dedicated, immutable approval timestamp (source for Processing Days)
+        createdAt: app.createdAt,   // original submission date, never the approval time
+        updatedAt: new Date(),      // approval time (generic; later saves may rewrite it)
+        approvedAt: new Date(),     // dedicated, immutable approval timestamp (source for Processing Days)
         history: app.history,
       });
+      await approvedDoc.save({ timestamps: false });
     }
 
     await Application.findByIdAndDelete(id);
