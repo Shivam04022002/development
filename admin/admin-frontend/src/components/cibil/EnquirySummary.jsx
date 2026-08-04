@@ -14,7 +14,7 @@ export default function EnquirySummary({ summary }) {
     <section className="cr-section">
       <h2 className="cr-h2">Enquiry Summary</h2>
       <div className="cr-box cr-box-flush">
-        <table className="cr-table">
+        <table className="cr-table cr-t-enqsummary">
           <thead><tr>{cells.map(([k]) => <th key={k}>{k}</th>)}</tr></thead>
           <tbody><tr>{cells.map(([k, v]) => <td key={k}>{show(v)}</td>)}</tr></tbody>
         </table>

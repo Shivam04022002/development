@@ -77,7 +77,7 @@ export default function Glossary() {
       <h1 className="cr-doc-title">GLOSSARY</h1>
       <div className="cr-box cr-box-flush">
         <div className="cr-box-title">CIR Data Glossary</div>
-        <table className="cr-table">
+        <table className="cr-table cr-t-glossary">
           <thead>
             <tr><th>Report Section</th><th>Key Term / Code</th><th>Description</th></tr>
           </thead>

@@ -43,7 +43,10 @@
   --box-pad-y: calc(11 * var(--pt));
   --box-pad-x: calc(9.7 * var(--pt));
   --radius: calc(2.5 * var(--pt));
-  --row-gap: calc(8.2 * var(--pt));        /* field rows sit 19.6 units apart */
+  /* Measured row pitches on the reference sheet: field rows 19.8 units, table
+     body rows 24.0, DPD rows 27.5. Each gap below is the pitch minus the
+     14.4-unit line box, so the rendered pitch matches the sheet exactly. */
+  --row-gap: calc(5.4 * var(--pt));
 
   width: calc(683 * var(--pt));
   margin: 0 auto;
@@ -166,7 +169,7 @@
    as the sheet sets them. */
 .cr-fields {
   display: grid;
-  grid-template-columns: calc(88 * var(--pt)) calc(12 * var(--pt)) 1fr;
+  grid-template-columns: calc(90 * var(--pt)) calc(12.4 * var(--pt)) 1fr;
   row-gap: var(--row-gap);
   align-content: start;
 }
@@ -175,9 +178,9 @@
   font-weight: 700;
   color: var(--cr-cyan);
   text-transform: uppercase;
-  letter-spacing: calc(.2 * var(--pt));
+  letter-spacing: -.015em;
   line-height: 1.5;
-  padding-right: calc(6 * var(--pt));
+  padding-right: calc(2 * var(--pt));
 }
 .cr-colon { font-size: var(--fs-colon); color: var(--cr-ink); line-height: 1.33; }
 .cr-val { font-size: var(--fs-value); color: var(--cr-ink); line-height: 1.26; overflow-wrap: break-word; }
@@ -191,7 +194,7 @@
 /* ── Tables ───────────────────────────────────────────────────────────────
    Cyan uppercase headers on white, a single rule under the header row and a
    hairline between body rows. */
-.cr-table { width: 100%; border-collapse: collapse; }
+.cr-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .cr-table thead th {
   font-size: var(--fs-label);
   font-weight: 700;
@@ -199,14 +202,14 @@
   text-transform: uppercase;
   letter-spacing: calc(.2 * var(--pt));
   text-align: left;
-  padding: calc(10 * var(--pt)) var(--box-pad-x);
+  padding: calc(6.2 * var(--pt)) var(--box-pad-x);
   border-bottom: 1px solid var(--cr-line);
   vertical-align: bottom;
 }
 .cr-table td {
   font-size: var(--fs-value);
   color: var(--cr-ink);
-  padding: calc(10 * var(--pt)) var(--box-pad-x);
+  padding: calc(4.8 * var(--pt)) var(--box-pad-x);
   vertical-align: middle;
   border-bottom: 1px solid var(--cr-line);
   overflow-wrap: break-word;
@@ -223,11 +226,46 @@
   color: var(--cr-ink);
 }
 
+/* ── Table column proportions ─────────────────────────────────────────────
+   Percentages measured off the reference sheet (header glyph x-positions as a
+   fraction of the 683-unit text column). The consumer-detail tables are inset
+   further than the rest on the sheet, hence the wider cell padding below.
+   Where we carry a column the sheet does not print, the extra width is taken
+   from the widest neighbouring column so the shared columns stay put. */
+.cr-table.cr-table-inset thead th,
+.cr-table.cr-table-inset td { padding-left: calc(28 * var(--pt)); padding-right: calc(28 * var(--pt)); }
+
+.cr-t-ident      th:nth-child(1) { width: 24.3%; }
+.cr-t-ident      th:nth-child(2) { width: 24.3%; }
+.cr-t-ident      th:nth-child(3) { width: 24.4%; }
+
+.cr-t-phone      th:nth-child(1) { width: 32.4%; }
+.cr-t-phone      th:nth-child(2) { width: 32.4%; }
+
+.cr-t-address    th:nth-child(1) { width: 34%; }
+.cr-t-address    th:nth-child(2) { width: 17%; }
+.cr-t-address    th:nth-child(3) { width: 16%; }
+.cr-t-address    th:nth-child(4) { width: 16%; }
+.cr-t-address    td:last-child { white-space: nowrap; }
+
+.cr-t-employment th:nth-child(1) { width: 20%; }
+.cr-t-employment th:nth-child(n+2) { width: 16%; }
+
+.cr-t-enquiry    th:nth-child(1) { width: 25%; }
+.cr-t-enquiry    th:nth-child(2) { width: 18%; }
+.cr-t-enquiry    th:nth-child(3) { width: 25%; }
+.cr-t-enquiry    th:nth-child(4) { width: 16%; }
+
+.cr-t-glossary   th:nth-child(1) { width: 25%; }
+.cr-t-glossary   th:nth-child(2) { width: 25%; }
+
+.cr-t-enqsummary th { width: 20%; }
+
 /* ── Score ────────────────────────────────────────────────────────────────
    Name and range left, gauge centre, scoring factors right. */
 .cr-score-body {
   display: grid;
-  grid-template-columns: calc(190 * var(--pt)) 1fr calc(290 * var(--pt));
+  grid-template-columns: calc(168 * var(--pt)) calc(182 * var(--pt)) 1fr;
   align-items: center;
   min-height: calc(150 * var(--pt));
 }
@@ -247,7 +285,7 @@
   line-height: 1.45;
 }
 .cr-gauge-wrap { display: flex; justify-content: center; }
-.cr-gauge-svg { width: calc(215 * var(--pt)); height: auto; }
+.cr-gauge-svg { width: calc(143 * var(--pt)); height: auto; }
 .cr-gauge-value { font-size: calc(43.8 * var(--pt)); font-weight: 700; fill: var(--cr-ink); }
 .cr-gauge-end { font-size: calc(12.75 * var(--pt)); fill: var(--cr-muted); font-weight: 400; }
 .cr-factor-head {
@@ -272,7 +310,7 @@
 .cr-summary-rows {
   display: grid;
   grid-template-columns: 1fr calc(12 * var(--pt)) auto;
-  row-gap: calc(7 * var(--pt));
+  row-gap: calc(3.2 * var(--pt));
   align-items: baseline;
   margin-top: calc(12 * var(--pt));
 }
@@ -308,10 +346,10 @@
 .cr-account-strip {
   display: flex;
   align-items: baseline;
-  gap: calc(6 * var(--pt));
+  gap: calc(3 * var(--pt));
   flex-wrap: wrap;
   padding: calc(11 * var(--pt)) var(--box-pad-x);
-  padding-right: calc(28 * var(--pt));   /* clears the corner flag */
+  padding-right: calc(22 * var(--pt));   /* clears the corner flag */
   border-bottom: 1px solid var(--cr-line);
 }
 .cr-account-strip .cr-inline { white-space: nowrap; }
@@ -331,7 +369,7 @@
 .cr-corner { position: absolute; top: 0; right: 0; width: calc(22 * var(--pt)); height: calc(22 * var(--pt)); }
 
 .cr-account-body { display: grid; grid-template-columns: 27.5% 44.8% 27.7%; }
-.cr-account-body > div { padding: calc(12 * var(--pt)) var(--box-pad-x); }
+.cr-account-body > div { padding: calc(10 * var(--pt)) var(--box-pad-x); }
 .cr-account-body > div + div { border-left: 1px solid var(--cr-line); }
 .cr-col-head {
   font-size: var(--fs-label);
@@ -339,11 +377,11 @@
   color: var(--cr-ink);
   text-transform: uppercase;
   letter-spacing: calc(.2 * var(--pt));
-  margin: 0 0 calc(13 * var(--pt));
+  margin: 0 0 calc(8 * var(--pt));
 }
 /* Card fields use a narrower label column than the consumer boxes. Grouped
    figures carry no spaces, so they never break; only wordy values wrap. */
-.cr-account-body .cr-fields { grid-template-columns: calc(66 * var(--pt)) calc(7 * var(--pt)) 1fr; }
+.cr-account-body .cr-fields { grid-template-columns: calc(63 * var(--pt)) calc(7.5 * var(--pt)) 1fr; }
 .cr-amounts-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: calc(8 * var(--pt)); }
 
 .cr-account-dpd { border-top: 1px solid var(--cr-line); }
@@ -369,7 +407,7 @@
   color: var(--cr-cyan);
   text-transform: uppercase;
   text-align: left;
-  padding: calc(12 * var(--pt)) 0;
+  padding: calc(6.55 * var(--pt)) 0;
   border-bottom: 1px solid var(--cr-line);
 }
 .cr-dpd-table tbody th {
@@ -377,13 +415,13 @@
   font-weight: 700;
   color: var(--cr-cyan);
   text-align: left;
-  padding: calc(12 * var(--pt)) 0;
+  padding: calc(6.55 * var(--pt)) 0;
 }
 .cr-dpd-table tbody td {
   font-size: var(--fs-value);
   color: var(--cr-ink);
   text-align: left;
-  padding: calc(12 * var(--pt)) 0;
+  padding: calc(6.55 * var(--pt)) 0;
 }
 /* The sheet prints every payment code in plain text. The severity classes stay
    wired up so tinting can be restored from this one rule. */

@@ -7,11 +7,17 @@ const ARC_TRAVELLED = "#00A6CA";
 const ARC_REMAINING = "#D5D5D5";
 const POINTER = "#000000";
 
-/* Gauge geometry, in the same reference units as the stylesheet. */
+/* Gauge geometry, measured off the reference sheet and expressed in the same
+   reference units as the stylesheet: the grey arc is 135.6 units across with a
+   13.1-unit stroke, giving a 61.25-unit centreline radius. */
 const CX = 107.5;
 const CY = 100;
-const R = 68.75;
-const STROKE = 11.25;
+const R = 61.25;
+const STROKE = 13.1;
+/* The pointer measures roughly 8 x 9 units on the sheet. */
+const P_TIP = 5.5;
+const P_TAIL = 3;
+const P_HALF = 4.2;
 
 /**
  * Score block: score name and range on the left, the semicircular gauge in the
@@ -32,9 +38,9 @@ export default function ScoreSection({ score }) {
   const tx = Math.sin(theta);
   const ty = Math.cos(theta);
   const pointer = [
-    [px + tx * 7, py + ty * 7],
-    [px - tx * 4 + ty * 5.5, py - ty * 4 - tx * 5.5],
-    [px - tx * 4 - ty * 5.5, py - ty * 4 + tx * 5.5],
+    [px + tx * P_TIP, py + ty * P_TIP],
+    [px - tx * P_TAIL + ty * P_HALF, py - ty * P_TAIL - tx * P_HALF],
+    [px - tx * P_TAIL - ty * P_HALF, py - ty * P_TAIL + tx * P_HALF],
   ].map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
 
   const arc = `M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`;
@@ -56,7 +62,9 @@ export default function ScoreSection({ score }) {
           </div>
 
           <div className="cr-gauge-wrap">
-            <svg className="cr-gauge-svg" viewBox="0 0 215 128" role="img"
+            {/* Tightly-bounded viewBox so one viewBox unit renders as one
+                reference unit: the arc is then exactly 135.6 units across. */}
+            <svg className="cr-gauge-svg" viewBox="36 30 143 98" role="img"
               aria-label={`Score ${value === null ? "not available" : value} out of ${max}`}>
               <path d={arc} fill="none" stroke={ARC_REMAINING} strokeWidth={STROKE} />
               {value !== null && (

@@ -19,7 +19,7 @@ export default function EnquiryTable({ enquiries }) {
           {enquiries.length === 0 ? (
             <p className="cr-empty cr-empty-padded">No enquiries reported.</p>
           ) : (
-            <table className="cr-table">
+            <table className="cr-table cr-t-enquiry">
               <thead>
                 <tr>
                   <th>Member Name</th>

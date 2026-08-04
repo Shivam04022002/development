@@ -7,14 +7,14 @@ import { inr } from "./currency";
  * A titled table inside a bordered box, with the sheet's optional footnote
  * beneath it, or a plain note when there is no data.
  */
-const Table = ({ title, head, rows, empty, note }) => (
+const Table = ({ title, head, rows, empty, note, cls = "" }) => (
   <div className="cr-subsection">
     <h2 className="cr-h2">{title}</h2>
     <div className="cr-box cr-box-flush">
       {rows.length === 0 ? (
         <p className="cr-empty cr-empty-padded">{empty}</p>
       ) : (
-        <table className="cr-table">
+        <table className={`cr-table ${cls}`}>
           {head && <thead><tr>{head.map((h) => <th key={h}>{h}</th>)}</tr></thead>}
           <tbody>{rows.map((r, i) => (
             <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
@@ -54,6 +54,7 @@ export default function ConsumerDetails({ consumer, score }) {
       </div>
 
       <Table
+        cls="cr-table-inset cr-t-ident"
         title="Identification(s)"
         head={["Identification Type", "Identification Number", "Issue Date", "Expiration Date"]}
         rows={[
@@ -71,6 +72,7 @@ export default function ConsumerDetails({ consumer, score }) {
       />
 
       <Table
+        cls="cr-table-inset cr-t-phone"
         title="Telephone(s)"
         head={["Type", "Telephone Number", "Telephone Extension"]}
         rows={consumer.telephones.map((t) => [show(t.type), show(t.number), DASH])}
@@ -79,6 +81,7 @@ export default function ConsumerDetails({ consumer, score }) {
       />
 
       <Table
+        cls="cr-table-inset"
         title="Email Contact(s)"
         head={null}
         rows={consumer.emails.map((e) => [show(e)])}
@@ -86,6 +89,7 @@ export default function ConsumerDetails({ consumer, score }) {
       />
 
       <Table
+        cls="cr-t-address"
         title="Consumer's Reported Address(es)"
         head={["Address", "Category", "Residence Code", "Reported By", "Date Reported"]}
         rows={consumer.addresses.map((a) => [
@@ -97,6 +101,7 @@ export default function ConsumerDetails({ consumer, score }) {
       />
 
       <Table
+        cls="cr-t-employment"
         title="Employment Information"
         head={[
           "Account Type (Date Reported)", "Employer", "Occupation Code", "Income",
