@@ -229,47 +229,100 @@ const ConsumerInformation = ({ consumer }) => {
   );
 };
 
-const ScoreSection = ({ score }) =>
+/*
+ * Scoring factors are normally a handful of short lines, and the block is kept
+ * atomic so the three columns stay aligned and the gauge stays vertically
+ * centred, exactly as on the reference sheet.
+ *
+ * But the bureau can also return them as full paragraphs — one live report
+ * carries ten factors totalling ~5,700 characters — which makes the block
+ * taller than a page. A wrap:false View that exceeds the page cannot be broken,
+ * so react-pdf paints it over whatever follows. Simply allowing the row to wrap
+ * is not a fix either: alignItems:center is undefined across a page boundary
+ * and strands the gauge in the middle of the next page.
+ *
+ * So the block stays atomic up to the point where it still fits a page, and
+ * only beyond that switches to a top-aligned, breakable row. Every report whose
+ * factors fit — including the reference — renders byte-identically; nothing is
+ * ever truncated or dropped.
+ */
+const FACTORS_ATOMIC_LIMIT = 1200; // characters; ~half a page in the factor column
+
+/** Name + range block — identical in both paths. */
+const ScoreName = ({ score }) =>
   h(
     View,
-    { style: styles.section, wrap: false },
-    h(Text, { style: styles.h2 }, "CIBIL TRANSUNION SCORE(S)"),
+    { style: { width: u(168) } },
     h(
-      View,
-      { style: styles.box },
-      h(
-        View,
-        { style: styles.scoreBody },
-        h(
-          View,
-          { style: { width: u(168) } },
-          h(Text, { style: styles.scoreName }, `${show(score.name, "Enhanced CreditVision")}® Score`),
-          h(
-            Text,
-            { style: styles.scoreRange },
-            `Ranges from:\n${score.min} (high risk) to ${score.max} (low risk)`
-          )
-        ),
-        h(
-          View,
-          { style: { width: u(182), alignItems: "center" } },
-          h(Gauge, { value: score.value, min: score.min, max: score.max })
-        ),
-        h(
-          View,
-          // Same definite-basis reasoning as styles.value: a long scoring factor
-          // would otherwise size this column from its content and overflow.
-          { style: { flexGrow: 1, flexBasis: 0, minWidth: 0 } },
-          h(Text, { style: styles.factorHead }, "SCORING FACTORS"),
-          score.factors.length === 0
-            ? h(Text, { style: styles.empty }, "No scoring factors reported.")
-            : score.factors.map((f, i) =>
-                h(Text, { key: i, style: styles.factorItem }, `${i + 1}. ${f}`)
-              )
-        )
-      )
+      Text,
+      { style: styles.scoreName },
+      `${show(score.name, "Enhanced CreditVision")}® Score`
+    ),
+    h(
+      Text,
+      { style: styles.scoreRange },
+      `Ranges from:
+${score.min} (high risk) to ${score.max} (low risk)`
     )
   );
+
+const FactorList = ({ factors }) =>
+  h(
+    View,
+    null,
+    h(Text, { style: styles.factorHead }, "SCORING FACTORS"),
+    factors.length === 0
+      ? h(Text, { style: styles.empty }, "No scoring factors reported.")
+      : factors.map((f, i) => h(Text, { key: i, style: styles.factorItem }, `${i + 1}. ${f}`))
+  );
+
+const ScoreSection = ({ score }) => {
+  const atomic = score.factors.join("").length <= FACTORS_ATOMIC_LIMIT;
+
+  // Normal path: the sheet's three-column row, kept whole so the gauge stays
+  // vertically centred and the columns stay aligned.
+  const atomicBody = h(
+    View,
+    { style: styles.scoreBody },
+    h(ScoreName, { score }),
+    h(
+      View,
+      { style: { width: u(182), alignItems: "center" } },
+      h(Gauge, { value: score.value, min: score.min, max: score.max })
+    ),
+    h(
+      View,
+      { style: { flexGrow: 1, flexBasis: 0, minWidth: 0 } },
+      h(FactorList, { factors: score.factors })
+    )
+  );
+
+  // Overflow path: the factor list moves below the name/gauge row so the block
+  // is a plain column that react-pdf can break. Reached only when the factors
+  // would otherwise make the block taller than a page.
+  const flowBody = h(
+    View,
+    null,
+    h(
+      View,
+      { style: styles.scoreBody },
+      h(ScoreName, { score }),
+      h(
+        View,
+        { style: { width: u(182), alignItems: "center" } },
+        h(Gauge, { value: score.value, min: score.min, max: score.max })
+      )
+    ),
+    h(FactorList, { factors: score.factors })
+  );
+
+  return h(
+    View,
+    { style: styles.section, wrap: atomic ? false : true },
+    h(Text, { style: styles.h2 }, "CIBIL TRANSUNION SCORE(S)"),
+    h(View, { style: styles.box }, atomic ? atomicBody : flowBody)
+  );
+};
 
 const AccountSummary = ({ summary }) => {
   const groups = [

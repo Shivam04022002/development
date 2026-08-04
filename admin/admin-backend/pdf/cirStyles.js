@@ -125,6 +125,12 @@ export const styles = StyleSheet.create({
 
   // ── Score ─────────────────────────────────────────────────────────────────
   scoreBody: { flexDirection: "row", alignItems: "center", minHeight: u(150) },
+  /* Used only when the bureau returns paragraph-length scoring factors that
+     make the block taller than a page. Centring is undefined across a page
+     boundary — it strands the gauge in the middle of the following page — so
+     the overflow variant aligns to the top and is allowed to break. Identical
+     to scoreBody in every other respect. */
+  scoreBodyFlow: { flexDirection: "row", alignItems: "flex-start", minHeight: u(150) },
   scoreName: { fontSize: FS.scoreName, fontWeight: "bold", lineHeight: 1.25 },
   scoreRange: { fontSize: FS.label, fontWeight: "bold", color: COLORS.cyan, marginTop: u(9), lineHeight: 1.45 },
   factorHead: { fontSize: FS.h3, fontWeight: "bold", color: COLORS.cyan, marginBottom: u(6) },
