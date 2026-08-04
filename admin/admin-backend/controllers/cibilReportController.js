@@ -115,7 +115,7 @@ async function streamPdf(req, res, disposition) {
   if (raw === null) return res.status(404).json(NOT_AVAILABLE);
 
   const formId = app.formId || String(app._id);
-  const pdf = generateCibilReportPdf({ app, cibil: app.cibil || {}, raw });
+  const pdf = await generateCibilReportPdf({ app, cibil: app.cibil || {}, raw });
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Length", pdf.length);
