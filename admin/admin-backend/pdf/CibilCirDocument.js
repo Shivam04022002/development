@@ -257,7 +257,9 @@ const ScoreSection = ({ score }) =>
         ),
         h(
           View,
-          { style: { flexGrow: 1 } },
+          // Same definite-basis reasoning as styles.value: a long scoring factor
+          // would otherwise size this column from its content and overflow.
+          { style: { flexGrow: 1, flexBasis: 0, minWidth: 0 } },
           h(Text, { style: styles.factorHead }, "SCORING FACTORS"),
           score.factors.length === 0
             ? h(Text, { style: styles.empty }, "No scoring factors reported.")

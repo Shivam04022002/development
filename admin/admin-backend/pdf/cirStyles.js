@@ -90,7 +90,12 @@ export const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", marginBottom: u(5.4) },
   label: { fontSize: FS.label, fontWeight: "bold", color: COLORS.cyan, lineHeight: 1.5 },
   colon: { fontSize: FS.colon, width: u(12.4), textAlign: "left" },
-  value: { fontSize: FS.value, flexGrow: 1, flexShrink: 1 },
+  /* flexBasis:0 + minWidth:0 are load-bearing, not cosmetic. Yoga defaults a
+     flex item to flexBasis:auto and min-width:auto, which size a Text from its
+     content and refuse to shrink below it — so a long value (a full postal
+     address) overflowed its column and overprinted the neighbouring one. A
+     definite zero basis makes the item wrap at the space actually available. */
+  value: { fontSize: FS.value, flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
   inline: { flexDirection: "row", alignItems: "baseline" },
   inlineLabel: { fontSize: FS.label, fontWeight: "bold", color: COLORS.cyan },
   inlineValue: { fontSize: FS.value },
@@ -131,7 +136,7 @@ export const styles = StyleSheet.create({
   summaryDivider: { borderLeftWidth: 0.6, borderLeftColor: COLORS.line },
   summaryRows: { marginTop: u(12) },
   summaryRow: { flexDirection: "row", alignItems: "baseline", marginBottom: u(3.2) },
-  summaryK: { fontSize: FS.summary, flexGrow: 1 },
+  summaryK: { fontSize: FS.summary, flexGrow: 1, flexBasis: 0, minWidth: 0 },
   summaryColon: { fontSize: FS.summary, width: u(12) },
   summaryV: { fontSize: FS.summary, fontWeight: "bold", textAlign: "right" },
 
