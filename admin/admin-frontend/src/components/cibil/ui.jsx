@@ -2,7 +2,7 @@ import React from "react";
 /**
  * Presentation primitives shared by the report components.
  *
- * These exist purely to render the bureau's "LABEL : value" field pattern
+ * These exist purely to render the sheet's "LABEL : value" field pattern
  * consistently. Nothing is derived or transformed here — formatting rules stay
  * in format.js and the currency symbol in currency.js.
  */
@@ -37,19 +37,18 @@ export function Inline({ label, value }) {
 export const Pipe = () => <span className="cr-pipe">|</span>;
 
 /**
- * Corner marker on an account card: a tick for an open account, a cross for a
- * closed one, mirroring the bureau's corner flag.
+ * Corner marker on an account card: the sheet folds the top-right corner into
+ * a filled triangle — a tick for an open account, a cross for a closed one.
  */
 export function StatusCorner({ active }) {
-  const fill = active ? "#1F9D77" : "#9AA6B2";
   return (
-    <svg className="cr-corner" viewBox="0 0 26 26" aria-hidden="true">
-      <path d="M0 0 H26 V26 Z" fill={fill} />
+    <svg className="cr-corner" viewBox="0 0 22 22" aria-hidden="true">
+      <path d="M0 0 H22 V22 Z" fill={active ? "#3BB012" : "#ACACAC"} />
       {active ? (
-        <path d="M14 8.5 L16.6 11.4 L21.4 6.2" fill="none" stroke="#fff" strokeWidth="1.8"
+        <path d="M11.8 6.6 L14.1 9.1 L18.4 4.2" fill="none" stroke="#fff" strokeWidth="1.6"
           strokeLinecap="round" strokeLinejoin="round" />
       ) : (
-        <path d="M15.4 6.4 L21 12 M21 6.4 L15.4 12" fill="none" stroke="#fff" strokeWidth="1.8"
+        <path d="M12.8 4.4 L18 9.6 M18 4.4 L12.8 9.6" fill="none" stroke="#fff" strokeWidth="1.6"
           strokeLinecap="round" />
       )}
     </svg>

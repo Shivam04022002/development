@@ -5,10 +5,11 @@ import { Inline } from "./ui";
 /**
  * Masthead, document title and the identification box — top of page 1.
  *
- * The layout follows the bureau's Consumer CIR masthead, but the wordmark is
- * OURS: this document is produced by Surjit Finance from bureau data supplied
- * through our authorised provider, so carrying the bureau's own logo would
- * misrepresent who issued it.
+ * The layout follows the Consumer CIR masthead: a meta pair on the left under
+ * a gold rule, the issuer wordmark on the right. The wordmark is OURS — this
+ * document is produced by Surjit Finance from bureau data supplied through our
+ * authorised provider, so carrying the bureau's own mark would misrepresent
+ * who issued it.
  */
 export default function ReportHeader({ header }) {
   return (
@@ -29,17 +30,17 @@ export default function ReportHeader({ header }) {
       </div>
       <div className="cr-masthead-rule" />
 
-      <h1 className="cr-doc-title">CONSUMER CIR</h1>
+      <h1 className="cr-doc-title cr-doc-title-lead">CONSUMER CIR</h1>
 
-      <div className="cr-box cr-id-box">
-        <div className="cr-masthead-meta">
-          <Inline label="Member ID" value={show(header.memberId)} />
-          <span className="cr-sep" />
-          <Inline label="Reference Number" value={show(header.referenceNumber)} />
-          <span className="cr-sep" />
-          <Inline label="Application No." value={show(header.applicationNo)} />
+      <section className="cr-section">
+        <div className="cr-box cr-id-box">
+          <div className="cr-masthead-meta">
+            <Inline label="Member ID" value={show(header.memberId)} />
+            <Inline label="Reference Number" value={show(header.referenceNumber)} />
+            <Inline label="Application No." value={show(header.applicationNo)} />
+          </div>
         </div>
-      </div>
+      </section>
     </header>
   );
 }

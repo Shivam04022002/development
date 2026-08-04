@@ -3,8 +3,11 @@ import { show, NA, DASH } from "./format";
 import { Fields } from "./ui";
 
 /**
- * Consumer identity box — two field columns, identity on the left and
- * identifiers on the right, in the bureau's field order.
+ * Consumer identity box — two field columns in the sheet's order: identity on
+ * the left, identifiers on the right.
+ *
+ * Every identifier the mapper carries is printed, including the ones the sheet
+ * leaves out when absent, so no mapped field is dropped from the document.
  */
 export default function ConsumerInformation({ consumer }) {
   const id = consumer.identification;
@@ -26,6 +29,8 @@ export default function ConsumerInformation({ consumer }) {
     ["Passport No.", show(id.passport, NA)],
     ["Aadhaar Number (UID)", show(id.aadhaar, NA)],
     ["CKYC", show(id.ckyc)],
+    ["Ration Card", show(id.rationCard, NA)],
+    ["Social ID", show(id.socialId, NA)],
   ];
 
   return (

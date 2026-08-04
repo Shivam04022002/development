@@ -25,15 +25,16 @@ const NoteIcon = () => (
 );
 
 /**
- * Composes the CIBIL report from the normalised model produced by
+ * Composes the Consumer CIR from the normalised model produced by
  * utils/cibilReportData.js. The raw Xaler response is never read here.
  *
  * Props:
  *   model         — the normalised report model (required)
  *   statusMessage — bureau message for a failed flow, supplied by the caller
  *
- * Pagination is entirely data-driven: page breaks come from CSS rules that
- * keep account cards and tables intact, so page count follows content.
+ * Pagination is entirely data-driven and, like the sheet, carries no forced
+ * page breaks: sections simply flow, and the CSS keeps account cards, DPD
+ * grids and table rows whole wherever a page happens to end.
  */
 export default function CibilReport({ model, statusMessage = null }) {
   if (!model) return null;
@@ -96,23 +97,21 @@ export default function CibilReport({ model, statusMessage = null }) {
         </div>
       </section>
 
-      <div className="cr-page-break" />
       <ConsumerDetails consumer={model.consumer} score={model.score} />
 
-      <div className="cr-page-break" />
       <section className="cr-section cr-section-flow">
         <h1 className="cr-doc-title">CONSUMER ACCOUNT DETAILS</h1>
         {model.accounts.length === 0 ? (
           <div className="cr-box"><p className="cr-empty">No accounts reported.</p></div>
         ) : (
-          model.accounts.map((a) => <AccountCard key={`${a.index}-${a.accountNumber || "na"}`} account={a} />)
+          model.accounts.map((a) => (
+            <AccountCard key={`${a.index}-${a.accountNumber || "na"}`} account={a} />
+          ))
         )}
       </section>
 
-      <div className="cr-page-break" />
       <EnquiryTable enquiries={model.enquiries} />
 
-      <div className="cr-page-break" />
       <Glossary />
       <ReportFooter header={model.header} consumerName={model.consumer.name} />
     </div>

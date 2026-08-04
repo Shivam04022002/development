@@ -2,15 +2,16 @@ import React from "react";
 import { MONTHS, dpdClass } from "./format";
 
 /**
- * Month-wise days-past-due / asset classification grid.
- * Year rows are data-driven, newest first.
+ * Month-wise days-past-due / asset classification grid: a year column and
+ * twelve equal months, ruled under the header only. Year rows are data-driven,
+ * newest first.
  *
- * The bureau prints every code in plain text, so the severity classes are kept
+ * The sheet prints every code in plain text, so the severity classes are kept
  * on the cells but render unstyled — tinting can be restored from one CSS rule.
  */
 export default function DPDGrid({ dpd }) {
   if (!dpd || dpd.years.length === 0) {
-    return <p className="cr-empty">No payment history reported.</p>;
+    return <p className="cr-empty cr-dpd-empty">No payment history reported.</p>;
   }
   return (
     <table className="cr-dpd-table">

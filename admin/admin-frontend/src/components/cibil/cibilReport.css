@@ -1,206 +1,489 @@
-/* CIBIL report — screen and print.
-   Presentation layer only. Pagination is data-driven: page breaks come from
-   these rules, never from a hardcoded page count.
+/* CIBIL Consumer CIR — screen and print.
 
-   The visual language follows the bureau's own Consumer CIR layout: white
-   rounded information boxes on a plain page, small cyan uppercase field labels
-   against dark values, hairline table rules, and generous cell padding. The
-   masthead carries OUR brand, not the bureau's — see ReportHeader.jsx. */
+   Presentation layer only. Nothing here derives, transforms or filters data;
+   the renderer consumes the normalised model from utils/cibilReportData.js.
+
+   ── Scale system ──────────────────────────────────────────────────────────
+   Every size in this file is expressed in *reference points* — the units of
+   the bureau's own Consumer CIR sheet, whose text column measures 683 units
+   across. `--pt` is the only thing that changes between media: it converts a
+   reference point into CSS pixels. Screen and print therefore differ by a
+   single number, and the two renderings stay proportionally identical.
+
+     screen : 683 units → 940px   (--pt: 1.376px)
+     print  : 683 units → 170mm   (--pt: 0.9407px), inside A4 with 20mm sides
+
+   ── Branding ──────────────────────────────────────────────────────────────
+   The masthead, disclaimer and closing line carry OUR identity: this document
+   is produced by Surjit Finance from bureau data supplied through our
+   authorised provider. Only the layout follows the bureau's sheet. */
 
 .cibil-report {
-  /* Bureau-style palette */
-  --cr-cyan: #0B9DD9;        /* field labels, table headers, accents */
-  --cr-navy: #253746;        /* document + section titles */
-  --cr-ink: #3A4551;         /* field values, body copy */
-  --cr-muted: #7B8894;       /* secondary text, scale ends */
-  --cr-line: #E1E6EB;        /* box borders */
-  --cr-rule: #EDF1F4;        /* in-table row rules */
-  --cr-band: #FAFCFD;        /* table header wash */
-  --cr-gold: #FFB81C;        /* masthead rule accent */
-  --cr-ok: #1F9D77;          /* active marker */
-  --cr-off: #9AA6B2;         /* closed marker */
+  --pt: 1.376px;
 
+  /* Palette, sampled from the reference sheet */
+  --cr-cyan: #00A6CA;        /* field labels, table headers, gauge arc */
+  --cr-ink: #2C2C2C;         /* titles, field values, body copy */
+  --cr-line: #D5D5D5;        /* box borders, table rules, gauge remainder */
+  --cr-gold: #FCD800;        /* masthead rule */
+  --cr-muted: #ACACAC;       /* gauge end labels, closed-account marker */
+  --cr-ok: #3BB012;          /* open-account marker */
+
+  /* Type scale */
+  --fs-title-lead: calc(24 * var(--pt));   /* CONSUMER CIR */
+  --fs-title: calc(19.2 * var(--pt));      /* subsequent document titles */
+  --fs-h2: calc(14.4 * var(--pt));         /* section headings, n. ACCOUNT */
+  --fs-h3: calc(10.8 * var(--pt));         /* strip and group titles */
+  --fs-label: calc(9.6 * var(--pt));       /* field labels, table headers */
+  --fs-value: calc(11.4 * var(--pt));      /* field values, table cells */
+  --fs-colon: calc(10.8 * var(--pt));
+  --fs-summary: calc(13.2 * var(--pt));    /* account-summary rows */
+
+  /* Shared metrics */
+  --box-pad-y: calc(11 * var(--pt));
+  --box-pad-x: calc(9.7 * var(--pt));
+  --radius: calc(2.5 * var(--pt));
+  --row-gap: calc(8.2 * var(--pt));        /* field rows sit 19.6 units apart */
+
+  width: calc(683 * var(--pt));
+  margin: 0 auto;
+  padding: calc(20 * var(--pt)) 0 calc(24 * var(--pt));
   background: #fff;
   color: var(--cr-ink);
-  font: 10.5px/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  max-width: 940px;
-  margin: 0 auto;
-  padding: 22px 26px 30px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: var(--fs-value);
+  line-height: 1.26;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ── Masthead ───────────────────────────────────────────────────────────── */
-.cr-masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
-.cr-masthead-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-top: 4px; }
-.cr-masthead-meta .cr-sep { width: 1px; height: 13px; background: var(--cr-line); }
-.cr-brand { text-align: right; white-space: nowrap; }
-.cr-brand-name { font-size: 19px; font-weight: 800; color: var(--cr-navy); letter-spacing: .4px; }
-.cr-brand-sub { font-size: 8px; font-weight: 700; color: var(--cr-cyan);
-  text-transform: uppercase; letter-spacing: 1.1px; margin-top: 1px; }
+/* ── Masthead ─────────────────────────────────────────────────────────────
+   Meta pair on the left, brand on the right, gold rule beneath the meta. */
+.cr-masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(20 * var(--pt));
+}
+.cr-masthead-meta {
+  display: flex;
+  align-items: baseline;
+  gap: calc(14 * var(--pt));
+  flex-wrap: wrap;
+}
+.cr-masthead-meta .cr-sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: calc(13 * var(--pt));
+  background: var(--cr-line);
+}
+.cr-brand { text-align: right; white-space: nowrap; padding-bottom: calc(2 * var(--pt)); }
+.cr-brand-name {
+  font-size: calc(22 * var(--pt));
+  font-weight: 700;
+  letter-spacing: calc(.3 * var(--pt));
+  color: var(--cr-ink);
+  line-height: 1.1;
+}
+.cr-brand-sub {
+  font-size: calc(8.4 * var(--pt));
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.9 * var(--pt));
+  margin-top: calc(2 * var(--pt));
+}
+/* The rule runs under the meta pair only — it stops short of the brand. */
+.cr-masthead-rule {
+  height: calc(3.1 * var(--pt));
+  width: 70.3%;
+  background: var(--cr-gold);
+  margin-top: calc(9 * var(--pt));
+}
 
-/* Two-tone masthead rule: gold lead-in, cyan run-out. */
-.cr-masthead-rule { height: 2.5px; margin: 8px 0 4px;
-  background: linear-gradient(to right, var(--cr-gold) 0 62%, var(--cr-cyan) 62% 100%); }
+/* ── Document and section titles ─────────────────────────────────────────── */
+.cr-doc-title {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  color: var(--cr-ink);
+  letter-spacing: calc(.2 * var(--pt));
+  margin: 0 0 calc(13 * var(--pt));
+  line-height: 1.2;
+}
+.cr-doc-title-lead { font-size: var(--fs-title-lead); margin: calc(45 * var(--pt)) 0 calc(15 * var(--pt)); }
 
-.cr-id-box { margin-bottom: 18px; }
-.cr-algo-box { display: flex; align-items: center; gap: 9px; }
-.cr-note-icon { width: 15px; height: 15px; color: var(--cr-muted); flex: none; }
-
-/* ── Titles and sections ────────────────────────────────────────────────── */
-.cr-doc-title { font-size: 24px; font-weight: 800; color: var(--cr-navy);
-  letter-spacing: .1px; margin: 24px 0 14px; }
-.cr-h2 { font-size: 10.5px; font-weight: 800; color: var(--cr-navy); text-transform: uppercase;
-  letter-spacing: .5px; margin: 0 0 8px; }
-.cr-h3 { font-size: 9.5px; font-weight: 800; color: var(--cr-navy); text-transform: uppercase;
-  letter-spacing: .5px; margin: 16px 0 7px; }
-.cr-h4 { font-size: 9px; font-weight: 800; color: var(--cr-navy); text-transform: uppercase;
-  letter-spacing: .4px; margin: 0 0 7px; }
-.cr-section { margin: 0 0 20px; break-inside: avoid; }
+.cr-h2 {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--cr-ink);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  margin: 0 0 calc(5 * var(--pt));
+  line-height: 1.25;
+}
+.cr-h3 {
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--cr-ink);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  margin: 0;
+  line-height: 1.3;
+}
+.cr-section { margin: 0 0 calc(12.6 * var(--pt)); break-inside: avoid; }
 .cr-section-flow { break-inside: auto; }
-.cr-subsection { margin: 0 0 14px; break-inside: avoid; }
-.cr-empty { color: var(--cr-muted); margin: 0; font-size: 10px; }
-.cr-empty-padded { padding: 12px 16px; }
+.cr-subsection { margin: 0 0 calc(12.6 * var(--pt)); break-inside: avoid; }
 
-/* ── Information box ────────────────────────────────────────────────────── */
-.cr-box { border: 1px solid var(--cr-line); border-radius: 4px; background: #fff;
-  padding: 14px 18px; break-inside: avoid; }
-/* Table containers: allowed to break, so a long table flows onto the next page
-   instead of overflowing a box that refuses to split. */
-.cr-box-flush { padding: 0; overflow: hidden; break-inside: auto; }
+/* Footnote under a details table, e.g. "(e) - IDENTIFICATION REPORTED…". */
+.cr-footnote {
+  font-size: var(--fs-h3);
+  color: var(--cr-ink);
+  margin: calc(6 * var(--pt)) 0 0;
+  letter-spacing: calc(.15 * var(--pt));
+}
+.cr-empty { color: var(--cr-ink); margin: 0; font-size: var(--fs-value); }
+.cr-empty-padded { padding: var(--box-pad-y) var(--box-pad-x); }
 
-/* ── Field rows: LABEL : value ──────────────────────────────────────────── */
-.cr-fields { display: grid; grid-template-columns: max-content 9px 1fr; gap: 6px 0;
-  align-content: start; }
-.cr-fields dt, .cr-label { font-size: 8.5px; font-weight: 700; color: var(--cr-cyan);
-  text-transform: uppercase; letter-spacing: .4px; line-height: 1.55; padding-right: 14px; }
-.cr-fields .cr-colon { color: var(--cr-muted); line-height: 1.55; }
-.cr-fields dd, .cr-val { margin: 0; font-size: 10px; color: var(--cr-ink); line-height: 1.55;
-  word-break: break-word; }
-.cr-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 34px; }
+/* ── Information box ──────────────────────────────────────────────────────
+   The sheet's one container: hairline border, barely-rounded corners. */
+.cr-box {
+  border: 1px solid var(--cr-line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: var(--box-pad-y) var(--box-pad-x);
+  break-inside: avoid;
+}
+/* Table containers carry no padding of their own and may split across pages,
+   so a long table flows on instead of overflowing a box that refuses to break. */
+.cr-box-flush { padding: 0; break-inside: auto; }
 
-/* Inline "LABEL : value" used in strips and one-line boxes. */
-.cr-inline { display: inline-flex; align-items: baseline; gap: 6px; }
+.cr-id-box { padding: calc(8 * var(--pt)) var(--box-pad-x); }
+.cr-id-box .cr-masthead-meta { justify-content: space-between; }
+.cr-algo-box { display: flex; align-items: center; gap: calc(7 * var(--pt)); }
+.cr-note-icon { width: calc(13 * var(--pt)); height: calc(13 * var(--pt)); color: var(--cr-ink); flex: none; }
+
+/* ── Field rows: LABEL : value ────────────────────────────────────────────
+   Fixed label column so wrapped labels keep the colons in one line, exactly
+   as the sheet sets them. */
+.cr-fields {
+  display: grid;
+  grid-template-columns: calc(88 * var(--pt)) calc(12 * var(--pt)) 1fr;
+  row-gap: var(--row-gap);
+  align-content: start;
+}
+.cr-label {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  line-height: 1.5;
+  padding-right: calc(6 * var(--pt));
+}
+.cr-colon { font-size: var(--fs-colon); color: var(--cr-ink); line-height: 1.33; }
+.cr-val { font-size: var(--fs-value); color: var(--cr-ink); line-height: 1.26; overflow-wrap: break-word; }
+.cr-grid-2 { display: grid; grid-template-columns: 1fr 1fr; column-gap: calc(20 * var(--pt)); }
+
+/* Inline "LABEL : value" used in strips and single-line boxes. */
+.cr-inline { display: inline-flex; align-items: baseline; gap: calc(5 * var(--pt)); }
 .cr-inline .cr-label { padding-right: 0; }
+.cr-pipe { color: var(--cr-line); font-size: var(--fs-value); }
 
-/* ── Tables ─────────────────────────────────────────────────────────────── */
+/* ── Tables ───────────────────────────────────────────────────────────────
+   Cyan uppercase headers on white, a single rule under the header row and a
+   hairline between body rows. */
 .cr-table { width: 100%; border-collapse: collapse; }
-.cr-table thead th { font-size: 8.5px; font-weight: 700; color: var(--cr-cyan);
-  text-transform: uppercase; letter-spacing: .4px; text-align: left; background: var(--cr-band);
-  padding: 9px 14px; border-bottom: 1px solid var(--cr-line); white-space: nowrap; }
-.cr-table td { font-size: 10px; color: var(--cr-ink); padding: 9px 14px; vertical-align: top;
-  border-bottom: 1px solid var(--cr-rule); overflow-wrap: anywhere; }
-.cr-table td.cr-nowrap { white-space: nowrap; overflow-wrap: normal; }
+.cr-table thead th {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  text-align: left;
+  padding: calc(10 * var(--pt)) var(--box-pad-x);
+  border-bottom: 1px solid var(--cr-line);
+  vertical-align: bottom;
+}
+.cr-table td {
+  font-size: var(--fs-value);
+  color: var(--cr-ink);
+  padding: calc(10 * var(--pt)) var(--box-pad-x);
+  vertical-align: middle;
+  border-bottom: 1px solid var(--cr-line);
+  overflow-wrap: break-word;
+}
 .cr-table tbody tr:last-child td { border-bottom: 0; }
-.cr-table .cr-strong { font-weight: 700; color: var(--cr-navy); }
+.cr-table td.cr-nowrap, .cr-table th.cr-nowrap { white-space: nowrap; overflow-wrap: normal; }
+.cr-table .cr-strong { font-weight: 700; color: var(--cr-ink); }
+/* Header row inside a box: the sheet titles the glossary box this way. */
+.cr-box-title {
+  padding: calc(9 * var(--pt)) var(--box-pad-x);
+  border-bottom: 1px solid var(--cr-line);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--cr-ink);
+}
 
-/* ── Score ──────────────────────────────────────────────────────────────── */
-.cr-score-body { display: grid; grid-template-columns: 1fr 1.15fr 1.6fr; gap: 20px;
-  align-items: center; }
-.cr-score-name { font-size: 14px; font-weight: 800; color: var(--cr-navy); line-height: 1.3; }
-.cr-score-range { font-size: 8.5px; font-weight: 700; color: var(--cr-cyan); margin-top: 8px;
-  line-height: 1.5; }
+/* ── Score ────────────────────────────────────────────────────────────────
+   Name and range left, gauge centre, scoring factors right. */
+.cr-score-body {
+  display: grid;
+  grid-template-columns: calc(190 * var(--pt)) 1fr calc(290 * var(--pt));
+  align-items: center;
+  min-height: calc(150 * var(--pt));
+}
+.cr-score-name {
+  font-size: calc(16.8 * var(--pt));
+  font-weight: 700;
+  color: var(--cr-ink);
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+.cr-score-name .cr-score-word { text-transform: none; }
+.cr-score-range {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  margin-top: calc(9 * var(--pt));
+  line-height: 1.45;
+}
 .cr-gauge-wrap { display: flex; justify-content: center; }
-.cr-gauge-svg { width: 214px; height: auto; }
-.cr-gauge-value { font-size: 38px; font-weight: 800; fill: var(--cr-navy); }
-.cr-gauge-end { font-size: 11px; fill: var(--cr-muted); font-weight: 600; }
-.cr-factor-head { font-size: 8.5px; font-weight: 700; color: var(--cr-cyan); text-transform: uppercase;
-  letter-spacing: .4px; margin-bottom: 6px; }
-.cr-factor-list { margin: 0; padding-left: 16px; }
-.cr-factor-list li { font-size: 10px; color: var(--cr-ink); margin-bottom: 3px; }
+.cr-gauge-svg { width: calc(215 * var(--pt)); height: auto; }
+.cr-gauge-value { font-size: calc(43.8 * var(--pt)); font-weight: 700; fill: var(--cr-ink); }
+.cr-gauge-end { font-size: calc(12.75 * var(--pt)); fill: var(--cr-muted); font-weight: 400; }
+.cr-factor-head {
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  margin-bottom: calc(6 * var(--pt));
+}
+/* The sheet numbers the factors in the text itself, so the list carries no
+   marker of its own. */
+.cr-factor-list { margin: 0; padding: 0; list-style: none; }
+.cr-factor-list li { font-size: var(--fs-value); color: var(--cr-ink); line-height: 1.6; }
 
-/* ── Account summary (three groups, divided) ────────────────────────────── */
+/* ── Account summary: three equal groups divided by vertical rules ───────── */
 .cr-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
-.cr-summary-grid > div { padding: 0 20px; }
+.cr-summary-grid > div { padding: 0 calc(14 * var(--pt)); }
 .cr-summary-grid > div + div { border-left: 1px solid var(--cr-line); }
 .cr-summary-grid > div:first-child { padding-left: 0; }
 .cr-summary-grid > div:last-child { padding-right: 0; }
-.cr-summary-row { display: grid; grid-template-columns: 1fr 8px auto; gap: 6px 0; align-items: baseline; }
-.cr-summary-row .cr-k { font-size: 10px; color: var(--cr-ink); }
-.cr-summary-row .cr-colon { color: var(--cr-muted); }
-.cr-summary-row .cr-v { font-size: 10.5px; font-weight: 700; color: var(--cr-navy); text-align: right;
-  white-space: nowrap; }
+.cr-summary-rows {
+  display: grid;
+  grid-template-columns: 1fr calc(12 * var(--pt)) auto;
+  row-gap: calc(7 * var(--pt));
+  align-items: baseline;
+  margin-top: calc(12 * var(--pt));
+}
+.cr-summary-rows .cr-k { font-size: var(--fs-summary); color: var(--cr-ink); }
+.cr-summary-rows .cr-colon { font-size: var(--fs-summary); }
+.cr-summary-rows .cr-v {
+  font-size: var(--fs-summary);
+  font-weight: 700;
+  color: var(--cr-ink);
+  text-align: right;
+  white-space: nowrap;
+}
 
-/* ── Account cards ──────────────────────────────────────────────────────── */
-.cr-account-index { font-size: 11px; font-weight: 800; color: var(--cr-navy); margin: 0 0 6px;
-  letter-spacing: .3px; }
-.cr-account { position: relative; border: 1px solid var(--cr-line); border-radius: 4px;
-  background: #fff; margin-bottom: 18px; break-inside: avoid; page-break-inside: avoid;
-  overflow: hidden; }
-.cr-account-strip { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-  padding: 10px 16px; padding-right: 108px; border-bottom: 1px solid var(--cr-line); }
-.cr-account-strip .cr-pipe { color: var(--cr-line); }
-.cr-strip-title { font-size: 9px; font-weight: 800; color: var(--cr-navy); text-transform: uppercase;
-  letter-spacing: .4px; }
-.cr-status { position: absolute; top: 9px; right: 34px; font-size: 9px; font-weight: 800;
-  letter-spacing: .5px; text-transform: uppercase; }
-.cr-status-on { color: var(--cr-ok); }
-.cr-status-off { color: var(--cr-off); }
-/* Corner flag, mirroring the bureau's tick / cross marker. */
-.cr-corner { position: absolute; top: 0; right: 0; width: 26px; height: 26px; }
-.cr-account-body { display: grid; grid-template-columns: 1.32fr 2.3fr .78fr; gap: 18px;
-  padding: 14px 18px; }
-.cr-amounts-grid { display: grid; grid-template-columns: 1fr 1.12fr; gap: 0 18px; }
-/* Amounts and terms are short values — never let a figure wrap mid-number. */
-.cr-amounts-grid .cr-val { white-space: nowrap; }
-.cr-account-body .cr-fields { grid-template-columns: max-content 8px 1fr; gap: 5px 0; }
-.cr-account-body .cr-label { padding-right: 9px; }
-.cr-account-body .cr-nowrap { white-space: nowrap; }
-.cr-account-dpd { border-top: 1px solid var(--cr-line); padding: 10px 16px 14px; }
-.cr-dpd-strip { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 9px; }
-.cr-dpd-strip .cr-pipe { color: var(--cr-line); }
+/* ── Account cards ────────────────────────────────────────────────────────
+   Header strip with a corner flag, a three-column body divided by vertical
+   rules, then the payment-history block. */
+.cr-account-index {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--cr-ink);
+  margin: 0 0 calc(7 * var(--pt));
+  letter-spacing: calc(.2 * var(--pt));
+}
+.cr-account {
+  position: relative;
+  border: 1px solid var(--cr-line);
+  border-radius: var(--radius);
+  background: #fff;
+  margin-bottom: calc(35 * var(--pt));
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.cr-account-strip {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6 * var(--pt));
+  flex-wrap: wrap;
+  padding: calc(11 * var(--pt)) var(--box-pad-x);
+  padding-right: calc(28 * var(--pt));   /* clears the corner flag */
+  border-bottom: 1px solid var(--cr-line);
+}
+.cr-account-strip .cr-inline { white-space: nowrap; }
+.cr-strip-title { font-size: var(--fs-h3); font-weight: 700; color: var(--cr-ink); text-transform: uppercase; }
+/* The status sits hard right on the strip's first line. Letting it flow rather
+   than reserving a fixed gutter keeps the strip on one line for the widest
+   status word, and it can never overlap the dates. */
+.cr-status {
+  margin-left: auto;
+  font-size: var(--fs-value);
+  font-weight: 700;
+  letter-spacing: calc(.2 * var(--pt));
+  color: var(--cr-ink);
+  white-space: nowrap;
+}
+/* Corner flag: a filled triangle with a tick (open) or cross (closed). */
+.cr-corner { position: absolute; top: 0; right: 0; width: calc(22 * var(--pt)); height: calc(22 * var(--pt)); }
 
-/* ── DPD grid ───────────────────────────────────────────────────────────── */
+.cr-account-body { display: grid; grid-template-columns: 27.5% 44.8% 27.7%; }
+.cr-account-body > div { padding: calc(12 * var(--pt)) var(--box-pad-x); }
+.cr-account-body > div + div { border-left: 1px solid var(--cr-line); }
+.cr-col-head {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-ink);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  margin: 0 0 calc(13 * var(--pt));
+}
+/* Card fields use a narrower label column than the consumer boxes. Grouped
+   figures carry no spaces, so they never break; only wordy values wrap. */
+.cr-account-body .cr-fields { grid-template-columns: calc(66 * var(--pt)) calc(7 * var(--pt)) 1fr; }
+.cr-amounts-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: calc(8 * var(--pt)); }
+
+.cr-account-dpd { border-top: 1px solid var(--cr-line); }
+.cr-dpd-strip {
+  display: flex;
+  align-items: baseline;
+  gap: calc(9 * var(--pt));
+  flex-wrap: wrap;
+  padding: calc(11 * var(--pt)) var(--box-pad-x);
+  border-bottom: 1px solid var(--cr-line);
+}
+
+/* ── DPD grid: a year column and twelve equal months, header rule only ───── */
 .cr-dpd-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.cr-dpd-table th:first-child, .cr-dpd-table td:first-child { width: 8.5%; }
-.cr-dpd-table thead th { font-size: 8.5px; font-weight: 700; color: var(--cr-cyan);
-  text-transform: uppercase; letter-spacing: .3px; text-align: center; padding: 7px 2px;
-  border-bottom: 1px solid var(--cr-line); }
-.cr-dpd-table tbody th { font-size: 9.5px; font-weight: 700; color: var(--cr-cyan); text-align: center;
-  padding: 9px 2px; border-bottom: 1px solid var(--cr-rule); }
-.cr-dpd-table tbody td { font-size: 9.5px; color: var(--cr-ink); text-align: center; padding: 9px 2px;
-  border-bottom: 1px solid var(--cr-rule); }
-.cr-dpd-table tbody tr:last-child th, .cr-dpd-table tbody tr:last-child td { border-bottom: 0; }
-/* The bureau prints every payment code in plain text — no colour coding. The
-   severity classes stay wired up so tinting can be restored in one place. */
+.cr-dpd-table th:first-child, .cr-dpd-table td:first-child {
+  width: 8%;
+  padding-left: var(--box-pad-x);
+  text-align: left;
+}
+.cr-dpd-table thead th {
+  font-size: var(--fs-value);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  text-align: left;
+  padding: calc(12 * var(--pt)) 0;
+  border-bottom: 1px solid var(--cr-line);
+}
+.cr-dpd-table tbody th {
+  font-size: var(--fs-value);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-align: left;
+  padding: calc(12 * var(--pt)) 0;
+}
+.cr-dpd-table tbody td {
+  font-size: var(--fs-value);
+  color: var(--cr-ink);
+  text-align: left;
+  padding: calc(12 * var(--pt)) 0;
+}
+/* The sheet prints every payment code in plain text. The severity classes stay
+   wired up so tinting can be restored from this one rule. */
 .dpd-ok, .dpd-warn, .dpd-bad, .dpd-none { background: none; font-weight: 400; }
-.dpd-none { color: var(--cr-muted); }
+.cr-dpd-empty { padding: var(--box-pad-y) var(--box-pad-x); }
 
-/* ── Notice (partial / error states) ────────────────────────────────────── */
-.cr-notice-lead { margin: 0 0 8px; font-size: 10px; color: var(--cr-ink); }
-.cr-notice-msg { margin: 10px 0; padding: 9px 12px; background: #FFF7F7;
-  border-left: 3px solid #E4572E; font-size: 10px; }
+/* ── Notice (partial / error states) ──────────────────────────────────────
+   Not on the bureau sheet — our own copy for a report that never arrived, set
+   in the same type so the page still reads as one document. */
+.cr-notice-lead { margin: 0 0 calc(8 * var(--pt)); font-size: var(--fs-value); }
+.cr-notice-msg {
+  margin: calc(10 * var(--pt)) 0;
+  padding: calc(8 * var(--pt)) calc(11 * var(--pt));
+  border-left: calc(2.5 * var(--pt)) solid var(--cr-cyan);
+  background: #F5FBFD;
+  font-size: var(--fs-value);
+}
 
-/* ── End of report / disclaimer ─────────────────────────────────────────── */
-.cr-end { display: flex; align-items: center; gap: 14px; margin: 22px 0 16px; break-inside: avoid; }
+/* ── Closing: end rule, disclaimer, footer ────────────────────────────────── */
+.cr-end {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--pt));
+  margin: calc(40 * var(--pt)) 0 calc(30 * var(--pt));
+  break-inside: avoid;
+}
 .cr-end::before, .cr-end::after { content: ""; flex: 1; height: 1px; background: var(--cr-line); }
-.cr-end-text { font-size: 9px; font-weight: 800; color: var(--cr-cyan); text-transform: uppercase;
-  letter-spacing: .6px; white-space: nowrap; }
-.cr-disclaimer-box { border: 1px solid var(--cr-line); border-radius: 4px; padding: 12px 16px;
-  break-inside: avoid; }
-.cr-disclaimer { font-size: 8.5px; line-height: 1.7; color: var(--cr-muted); text-align: justify;
-  margin: 7px 0 0; }
-.cr-footer-meta { display: flex; justify-content: space-between; gap: 16px; margin-top: 12px;
-  font-size: 8.5px; color: var(--cr-muted); }
+.cr-end-text {
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+  white-space: nowrap;
+}
+.cr-disclaimer-box {
+  border: 1px solid var(--cr-line);
+  border-radius: var(--radius);
+  break-inside: avoid;
+}
+.cr-disclaimer-head {
+  padding: calc(9 * var(--pt)) var(--box-pad-x);
+  border-bottom: 1px solid var(--cr-line);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-cyan);
+  text-transform: uppercase;
+  letter-spacing: calc(.2 * var(--pt));
+}
+.cr-disclaimer {
+  margin: 0;
+  padding: calc(10 * var(--pt)) var(--box-pad-x);
+  font-size: var(--fs-label);
+  line-height: 1.75;
+  color: var(--cr-ink);
+}
+.cr-footer-meta {
+  margin-top: calc(22 * var(--pt));
+  padding-top: calc(10 * var(--pt));
+  border-top: 1px solid var(--cr-line);
+  font-size: var(--fs-label);
+  color: var(--cr-ink);
+  line-height: 1.7;
+}
+.cr-footer-meta strong { font-weight: 700; }
 
-/* ── Pagination / print ─────────────────────────────────────────────────── */
+/* ── Pagination / print ───────────────────────────────────────────────────── */
 .cr-page-break { break-before: page; page-break-before: always; height: 0; }
 
+@page { size: A4 portrait; margin: 14mm 20mm 14mm; }
+
 @media print {
-  @page { size: A4; margin: 12mm 11mm 13mm; }
+  .cibil-report {
+    --pt: 0.9407px;          /* 683 units → 170mm inside A4's 20mm margins */
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
   body { background: #fff; }
-  .cibil-report { max-width: none; margin: 0; padding: 0; font-size: 10px; }
   .cr-no-print, .cr-toolbar { display: none !important; }
-  .cr-table thead { display: table-header-group; }   /* repeat headers across pages */
-  .cr-table tr, .cr-account, .cr-subsection, .cr-account-dpd,
-  .cr-disclaimer-box, .cr-end { break-inside: avoid; }
-  .cr-box { break-inside: avoid; }
+
+  /* Long tables repeat their header on each page they continue onto. */
+  .cr-table thead { display: table-header-group; }
+  .cr-table tr { break-inside: avoid; }
+
+  /* Cards and grids stay whole; the containers around them may split. */
+  .cr-account, .cr-account-dpd, .cr-dpd-table, .cr-subsection,
+  .cr-disclaimer-box, .cr-end, .cr-box { break-inside: avoid; }
   .cr-box-flush, .cr-section-flow { break-inside: auto; }
+
   /* No orphan headings: a title never ends a page on its own. */
-  .cr-doc-title, .cr-h2, .cr-h3, .cr-h4, .cr-account-index, .cr-table thead {
-    break-after: avoid; page-break-after: avoid;
+  .cr-doc-title, .cr-h2, .cr-h3, .cr-col-head, .cr-account-index, .cr-table thead {
+    break-after: avoid;
+    page-break-after: avoid;
   }
   .cr-disclaimer, .cr-factor-list li { orphans: 2; widows: 2; }
-  /* Backgrounds and rules must survive the print pipeline. */
-  .cr-masthead-rule, .cr-table thead th, .cr-corner, .cr-notice-msg {
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+
+  /* Rules, flags and washes must survive the print pipeline. */
+  .cr-masthead-rule, .cr-corner, .cr-notice-msg, .cr-table thead th {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

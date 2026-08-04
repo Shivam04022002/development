@@ -3,7 +3,7 @@ import { show } from "./format";
 import { inr } from "./currency";
 
 /**
- * Calculated account totals in one box, split into the bureau's three
+ * Calculated account totals in one box, split into the sheet's three equal
  * groups by vertical rules: accounts, balances, opened dates.
  */
 export default function AccountSummary({ summary }) {
@@ -31,8 +31,8 @@ export default function AccountSummary({ summary }) {
         <div className="cr-summary-grid">
           {groups.map(([title, rows]) => (
             <div key={title}>
-              <h4 className="cr-h4">{title}</h4>
-              <div className="cr-summary-row">
+              <h3 className="cr-h3">{title}</h3>
+              <div className="cr-summary-rows">
                 {rows.map(([k, v]) => (
                   <React.Fragment key={k}>
                     <div className="cr-k">{k}</div>
