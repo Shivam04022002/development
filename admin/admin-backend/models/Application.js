@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
+import { documentVerification } from "./documentVerificationSchemas.js";
+import { assignment } from "./assignmentSchemas.js";
 
 /**
  * Application — the SINGLE source of truth for a loan application.
@@ -112,6 +114,14 @@ const applicationSchema = new mongoose.Schema(
       reportDate: { type: String, default: "" },
       requestId: { type: String, default: "" },
       fetchedAt: { type: Date, default: null },
+      // PAN of the person this summary (and the linked CibilReport) belongs to.
+      // A bureau pull is always made against the APPLICANT's PAN, so before the
+      // Applicant/Co-Applicant roles could be swapped the role alone identified
+      // the subject. Once they can swap, the subject has to be recorded
+      // explicitly — otherwise there is no way to tell whose report this is.
+      // Empty on records that predate the swap feature; treated as "belongs to
+      // the applicant", which is what it meant at the time.
+      subjectPan: { type: String, default: "" },
     },
 
     // ── RC & Number Plate module ─────────────────────────────────────────────
@@ -123,6 +133,16 @@ const applicationSchema = new mongoose.Schema(
     rcDetails,
     numberPlateDetails,
     spdcDetails,
+
+    // ── Document verification (Phase 2.1) ────────────────────────────────────
+    // Per-document status keyed by role → field. Absent means "Pending", so
+    // every existing record stays valid without a migration.
+    documentVerification,
+
+    // ── Task & Assignment Center ─────────────────────────────────────────────
+    // Who is responsible for the next action. Absent = unassigned. Never
+    // affects workflowStage.
+    assignment,
   },
   { timestamps: true }
 );
@@ -138,5 +158,10 @@ applicationSchema.index({ createdAt: -1 });
 applicationSchema.index({ "dealerDetails.branch": 1 });
 applicationSchema.index({ "dealerDetails.district": 1 });
 applicationSchema.index({ dealer: 1 });
+// Phase 3.1: the My Tasks queue selects by owner on every dashboard load, and
+// the assignment counters scan due date + task status. Sparse — unassigned
+// applications carry no assignment block at all.
+applicationSchema.index({ "assignment.assignedTo": 1 }, { sparse: true });
+applicationSchema.index({ "assignment.taskStatus": 1, "assignment.dueDate": 1 }, { sparse: true });
 
 export default mongoose.model("Application", applicationSchema, "applications");

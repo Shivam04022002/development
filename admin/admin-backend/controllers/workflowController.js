@@ -1,9 +1,11 @@
 // controllers/workflowController.js
+import mongoose from "mongoose";
 import Application from "../models/Application.js";
 import ApprovedApplication from "../models/ApprovedApplication.js";
 import RejectedApplication from "../models/RejectedApplication.js";
 import ActivityLog from "../models/ActivityLog.js";
 import ApplicationHistory from "../models/ApplicationHistory.js";
+import CreditNote from "../models/CreditNote.js";
 import User from "../models/User.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
 import { createHistoryEntry } from "./formTrackingController.js";
@@ -25,6 +27,8 @@ import {
 import { logEvent } from "../utils/log.js";
 import { escapeRegex } from "../utils/escapeRegex.js";
 import { initVehicleDocs } from "../utils/vehicleDocs.js";
+import { loadCibilPolicy, buildEligibility } from "../utils/loanEligibility.js";
+import { buildApprovalChecklist } from "../utils/approvalChecklist.js";
 
 /**
  * Augment a lean application document with normalized, flat fields for list
@@ -126,6 +130,25 @@ export const getApplicationById = async (req, res) => {
     }
 
     if (!app) return res.status(404).json({ error: "Application not found" });
+
+    // Advisory eligibility for the decision panel. Computed here rather than in
+    // the SPA because the policy bands live behind a Super Admin-only settings
+    // endpoint, and hardcoding a threshold client-side would duplicate a
+    // business rule. Never blocks the read: a failure just omits the block.
+    try {
+      const policy = await loadCibilPolicy();
+      app.eligibility = buildEligibility(app, policy);
+
+      // Approval readiness, derived from the same data plus the Credit Note
+      // record. One extra indexed lookup per read.
+      const note = await CreditNote.findOne({ applicationId: app._id })
+        .select("createdBy updatedBy createdAt updatedAt pdfPath pdfOutdated")
+        .lean();
+      app.checklist = buildApprovalChecklist(app, app.eligibility, note);
+    } catch (elErr) {
+      console.error("Eligibility/checklist computation failed:", elErr?.message || elErr);
+    }
+
     return res.json(app);
   } catch (err) {
     console.error("getApplicationById error:", err);
@@ -205,9 +228,46 @@ export const getPendingApplications = async (req, res) => {
     // Optional branch filter
     if (branch) filter = { $and: [filter, { "dealerDetails.branch": new RegExp(escapeRegex(branch), "i") }] };
 
+    // ── Assignment filters (Phase 3.1) ──────────────────────────────────────
+    // Additive: every one is optional, so the existing list behaviour is
+    // unchanged when none is supplied.
+    const assignedTo = (req.query.assignedTo || "").trim();
+    const priority = (req.query.priority || "").trim();
+    const taskStatus = (req.query.taskStatus || "").trim();
+    const overdue = String(req.query.overdue || "").trim() === "true";
+    const dueBefore = (req.query.dueBefore || "").trim();
+
+    if (assignedTo) {
+      if (assignedTo === "unassigned") {
+        filter = { $and: [filter, { $or: [
+          { "assignment.assignedTo": { $exists: false } },
+          { "assignment.assignedTo": null },
+        ] }] };
+      } else if (mongoose.Types.ObjectId.isValid(assignedTo)) {
+        filter = { $and: [filter, { "assignment.assignedTo": new mongoose.Types.ObjectId(assignedTo) }] };
+      } else {
+        return res.status(400).json({ error: "Invalid assignedTo filter." });
+      }
+    }
+    if (priority) filter = { $and: [filter, { "assignment.priority": priority }] };
+    if (taskStatus) filter = { $and: [filter, { "assignment.taskStatus": taskStatus }] };
+    if (overdue) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      filter = { $and: [filter, {
+        "assignment.dueDate": { $lt: today, $ne: null },
+        "assignment.taskStatus": { $nin: ["Completed", "Cancelled"] },
+      }] };
+    }
+    if (dueBefore) {
+      const d = new Date(dueBefore);
+      if (!Number.isNaN(d.getTime())) {
+        filter = { $and: [filter, { "assignment.dueDate": { $lte: d, $ne: null } }] };
+      }
+    }
+
     const [applications, total] = await Promise.all([
       Application.find(filter)
-        .select("formId applicant dealerDetails status workflowStage createdAt updatedAt")
+        .select("formId applicant dealerDetails status workflowStage assignment createdAt updatedAt")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -374,6 +434,21 @@ export const updateWorkflowStage = async (req, res) => {
       });
     }
 
+    // An Applicant/Co-Applicant swap leaves the rendered Credit Note PDF showing
+    // the previous applicant. Hold the application at its current stage until it
+    // is regenerated, so a document naming the wrong person cannot travel
+    // forward through the workflow.
+    const outdatedNote = await CreditNote.findOne({ applicationId: id, pdfOutdated: true })
+      .select("_id")
+      .lean();
+    if (outdatedNote) {
+      return res.status(409).json({
+        message:
+          "The Credit Note PDF is out of date after the applicant swap. Regenerate it before moving to the next stage.",
+        code: "credit_note_pdf_outdated",
+      });
+    }
+
     // push history and update
     app.history = app.history || [];
     app.history.push({
@@ -497,6 +572,8 @@ export const updateWorkflowStage = async (req, res) => {
         // application becomes eligible for dealer upload. Carry-forward only —
         // an already-uploaded section is never overwritten.
         ...initVehicleDocs(app),
+        // Carry verification across so it is not lost when the record moves.
+        documentVerification: app.documentVerification,
       });
       await approvedDoc.save({ timestamps: false });
     }
@@ -605,6 +682,8 @@ async function approveApplicationCore(id, admin, note) {
       // application becomes eligible for dealer upload. Carry-forward only —
       // an already-uploaded section is never overwritten.
       ...initVehicleDocs(app),
+      // Carry verification across so it is not lost when the record moves.
+      documentVerification: app.documentVerification,
     });
     await approvedDoc.save({ timestamps: false });
   }
@@ -957,7 +1036,30 @@ export const getWorkflowStats = async (req, res) => {
       ApprovedApplication,
       RejectedApplication
     );
-    return res.json({ stats: counts });
+
+    // ── Assignment counters (Phase 3.1) ─────────────────────────────────────
+    // Added to the EXISTING stats response rather than a new endpoint. A
+    // failure here never breaks the dashboard — the block is simply omitted.
+    let assignment;
+    try {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const open = { $nin: ["Completed", "Cancelled"] };
+      const [assigned, unassigned, highPriority, overdue, completedToday] = await Promise.all([
+        Application.countDocuments({ "assignment.assignedTo": { $exists: true, $ne: null } }),
+        Application.countDocuments({ $or: [
+          { "assignment.assignedTo": { $exists: false } },
+          { "assignment.assignedTo": null },
+        ] }),
+        Application.countDocuments({ "assignment.priority": { $in: ["High", "Critical"] }, "assignment.taskStatus": open }),
+        Application.countDocuments({ "assignment.dueDate": { $lt: today, $ne: null }, "assignment.taskStatus": open }),
+        Application.countDocuments({ "assignment.completedAt": { $gte: today } }),
+      ]);
+      assignment = { assigned, unassigned, highPriority, overdue, completedToday };
+    } catch (aErr) {
+      console.error("Assignment stats failed:", aErr?.message || aErr);
+    }
+
+    return res.json({ stats: counts, ...(assignment ? { assignment } : {}) });
   } catch (err) {
     console.error("getWorkflowStats error:", err);
     return res.status(500).json({ error: err.message });

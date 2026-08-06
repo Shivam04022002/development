@@ -48,7 +48,7 @@ export default function ConsumerDetails({ consumer, score }) {
             <Inline label="Consumer Name" value={show(consumer.name)} />
             <Inline label="D.O.B" value={show(consumer.dob)} />
             <Inline label="Gender" value={show(consumer.gender)} />
-            <Inline label="CreditVision Score" value={show(score?.value)} />
+            <Inline label="CreditVision® Score" value={show(score?.value)} />
           </div>
         </div>
       </div>

@@ -5,9 +5,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import Navbar from "../components/Navbar";
+import PendingActionsSection from "../components/PendingActionsSection";
 import Footer from "../components/Footer";
 import { API_BASE } from "../config";
 import { clearSession } from "../utils/SecureStorage";
+import { fetchDealerActions } from "../utils/dealerActionsApi";
 
 const ORANGE = "#FF9100";
 const YELLOW = "#FFD600";
@@ -38,6 +40,10 @@ export default function DashboardScreen({ navigation }) {
   const [vehicleCounts, setVehicleCounts] = useState(null);
   const [vehicleCountsFailed, setVehicleCountsFailed] = useState(false);
 
+  // Dealer Action Center — requests the admin raised against this dealer.
+  const [actions, setActions] = useState(null);
+  const [actionsFailed, setActionsFailed] = useState(false);
+
   const intervalRef = useRef(null);
 
   useFocusEffect(
@@ -58,6 +64,7 @@ export default function DashboardScreen({ navigation }) {
         // immediate fetch then polling
         await fetchCounts(true);
         await fetchVehicleCounts();
+        await loadDealerActions();
 
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
@@ -70,6 +77,7 @@ export default function DashboardScreen({ navigation }) {
         intervalRef.current = setInterval(() => {
           fetchCounts(true);
           fetchVehicleCounts();
+          loadDealerActions();
         }, pollInterval);
       };
 
@@ -269,6 +277,21 @@ export default function DashboardScreen({ navigation }) {
   };
 
   /**
+   * Pending dealer actions. One request per refresh cycle, on the same
+   * lifecycle as the counts above — no separate polling.
+   */
+  const loadDealerActions = async () => {
+    try {
+      setActions(await fetchDealerActions());
+      setActionsFailed(false);
+    } catch (err) {
+      if (DEBUG) console.warn("Error in loadDealerActions:", err?.message || err);
+      // Keep the last good data; only show the failure state if none was loaded.
+      setActionsFailed(true);
+    }
+  };
+
+  /**
    * RC / Number Plate pending counts.
    *
    * ONE request per refresh cycle: the endpoint returns both numbers together,
@@ -374,6 +397,16 @@ export default function DashboardScreen({ navigation }) {
                 onPress={() => navigation.navigate("NumberPlateUploadScreen")}
               />
             </View>
+
+            <PendingActionsSection
+              loading={actions === null && !actionsFailed}
+              failed={actionsFailed && actions === null}
+              counters={actions?.counters}
+              items={actions?.items}
+              onOpen={(item) =>
+                navigation.navigate("DealerActionCenter", { applicationId: item.applicationId })
+              }
+            />
           </View>
 
           <View style={{ flex: 1, justifyContent: "flex-end" }}>

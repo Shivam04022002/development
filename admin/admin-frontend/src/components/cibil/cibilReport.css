@@ -14,9 +14,8 @@
      print  : 683 units → 170mm   (--pt: 0.9407px), inside A4 with 20mm sides
 
    ── Branding ──────────────────────────────────────────────────────────────
-   The masthead, disclaimer and closing line carry OUR identity: this document
-   is produced by Surjit Finance from bureau data supplied through our
-   authorised provider. Only the layout follows the bureau's sheet. */
+   Masthead wordmark, disclaimer and closing lines follow the reference sheet.
+   The wordmark is set as text, not reproduced as logo artwork. */
 
 .cibil-report {
   --pt: 1.376px;
@@ -79,6 +78,22 @@
   min-height: calc(13 * var(--pt));
   background: var(--cr-line);
 }
+.cr-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6 * var(--pt));
+  white-space: nowrap;
+  color: #00A2D1;
+  font-size: calc(26 * var(--pt));
+  line-height: 1;
+  padding-bottom: calc(2 * var(--pt));
+}
+.cr-wordmark-a { font-weight: 400; letter-spacing: calc(-.2 * var(--pt)); }
+.cr-wordmark-b { font-weight: 400; letter-spacing: calc(.2 * var(--pt)); }
+
+/* Brand block for the Credit Underwriting Report, which imports this
+   stylesheet (see underwriting/CreditUnderwritingReport.jsx) and defines no
+   .cr-brand rules of its own. The CIR masthead no longer uses these. */
 .cr-brand { text-align: right; white-space: nowrap; padding-bottom: calc(2 * var(--pt)); }
 .cr-brand-name {
   font-size: calc(22 * var(--pt));
@@ -276,6 +291,7 @@
   line-height: 1.25;
   text-transform: uppercase;
 }
+.cr-score-name .cr-reg { font-size: calc(14 * var(--pt)); vertical-align: super; }
 .cr-score-name .cr-score-word { text-transform: none; }
 .cr-score-range {
   font-size: var(--fs-label);
@@ -482,11 +498,14 @@
   margin-top: calc(22 * var(--pt));
   padding-top: calc(10 * var(--pt));
   border-top: 1px solid var(--cr-line);
-  font-size: var(--fs-label);
-  color: var(--cr-ink);
-  line-height: 1.7;
 }
-.cr-footer-meta strong { font-weight: 700; }
+.cr-copyright { font-size: var(--fs-label); color: var(--cr-ink); line-height: 1.6; }
+.cr-cin {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--cr-ink);
+  margin-top: calc(4 * var(--pt));
+}
 
 /* ── Pagination / print ───────────────────────────────────────────────────── */
 .cr-page-break { break-before: page; page-break-before: always; height: 0; }

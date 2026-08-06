@@ -133,7 +133,12 @@ export const completeCreditNote = async (req, res) => {
     // 3) Store the PDF in the application folder:
     //    uploads/applications/<APPNO>/credit-note.pdf  (relative path saved).
     const pdfRel = await writeAppFile(app.formId || String(app._id), "credit-note.pdf", pdfBuffer);
-    await CreditNote.updateOne({ _id: creditNote._id }, { $set: { pdfPath: pdfRel } });
+    // Regenerating clears the outdated flag an applicant swap may have set —
+    // the PDF now reflects the current applicant again.
+    await CreditNote.updateOne(
+      { _id: creditNote._id },
+      { $set: { pdfPath: pdfRel, pdfOutdated: false } }
+    );
 
     // 5) Advance workflowStage pending_cibil → contact creation (status stays pending).
     app.workflowStage = CONTACT_CREATION_STAGE;

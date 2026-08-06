@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { WORKFLOW_STAGES, stageLabel, stageColor, toStage } from "../utils/workflowConfig";
 import logo from "../assets/logo-surjit.png";
+import MyTasksPanel from "../components/MyTasksPanel";
 import {
   useReactTable,
   getCoreRowModel,
@@ -782,6 +783,17 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* ══ My Tasks — the caller's own work queue ══ */}
+      <MyTasksPanel
+        onOpen={(t) =>
+          navigate(
+            t.source === "approved"
+              ? `/approved/${t.applicationId}`
+              : `/application/${t.applicationId}`
+          )
+        }
+      />
 
       {/* ══ Table Card ══ */}
       <div style={{

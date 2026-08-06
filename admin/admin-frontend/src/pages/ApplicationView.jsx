@@ -9,6 +9,10 @@ import DashboardLayout from "../components/layout/DashboardLayout";
 import ActivityHistoryDrawer from "../components/ActivityHistoryDrawer";
 import Timeline from "../components/Timeline";
 import CreditNoteSummary from "../components/CreditNoteSummary";
+import ApplicantSwapCards from "../components/ApplicantSwapCards";
+import AssignmentPanel from "../components/AssignmentPanel";
+import LoanApprovalChecklist from "../components/LoanApprovalChecklist";
+import DocumentVerification from "../components/DocumentVerification";
 import { usePendingInvalidate } from "../hooks/useApplications";
 import {
   WORKFLOW_STAGES,
@@ -345,6 +349,28 @@ export default function ApplicationView() {
     a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
   const applicantName = fullName(applicantData) || "Applicant";
 
+  // Verification badge for one document. Closes over the application and the
+  // page's existing refresh, so each call site stays a single line and the
+  // surrounding layout is unchanged.
+  const DocVerify = ({ role, field, label }) => {
+    const party = role === "applicant" ? applicantData : app?.coApplicant;
+    return (
+      <DocumentVerification
+        applicationId={app?._id}
+        role={role}
+        field={field}
+        label={label}
+        hasFile={Boolean(party?.[field])}
+        state={app?.documentVerification?.[role]?.[field]}
+        onChanged={refreshApplication}
+      />
+    );
+  };
+
+  // Approval is gated only by checklist items the backend already enforces
+  // (see utils/approvalChecklist.js — `blocking`). Reject is never gated.
+  const approvalBlocked = Boolean(app?.checklist?.approval?.blocked);
+
   // The existing endpoint accepts a Credit Note only at Pending CIBIL, so the
   // menu item is disabled elsewhere rather than letting the user hit a 400.
   const creditNoteAvailable = toStage(app?.workflowStage || "") === "pending_cibil";
@@ -522,6 +548,16 @@ export default function ApplicationView() {
         {/* ═══════════ RIGHT / CONTENT COLUMN ═══════════ */}
         <div style={S.content}>
 
+          {/* ──── Task ownership (assignment never changes the workflow) ──── */}
+          <AssignmentPanel
+            applicationId={app?._id}
+            assignment={app?.assignment}
+            onChanged={refreshApplication}
+          />
+
+          {/* ──── Applicant / Co-Applicant summary + role swap ──── */}
+          <ApplicantSwapCards app={app} onSwapped={refreshApplication} />
+
           {/* ──── Applicant Section ──── */}
           <div ref={applicantRef} style={S.section}>
             <h2 style={S.sectionHeading}>Applicant</h2>
@@ -534,7 +570,10 @@ export default function ApplicationView() {
                   <div style={S.fieldLabel}><b>Profile</b></div>
                   <div style={S.imgThumbBox}>
                     {applicantData?.photo ? (
-                      <FilePreview src={applicantData.photo} alt="Applicant" style={S.imgThumb} />
+                      <>
+                        <FilePreview src={applicantData.photo} alt="Applicant" style={S.imgThumb} />
+                        <DocVerify role="applicant" field="photo" label="Photograph" />
+                      </>
                     ) : (
                       <span style={S.noImgText}>No Image</span>
                     )}
@@ -549,7 +588,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Front</b></div>
                   {applicantData?.aadharFront ? (
-                    <FilePreview src={applicantData.aadharFront} alt="Aadhaar Front" style={S.docImg} />
+                    <>
+                      <FilePreview src={applicantData.aadharFront} alt="Aadhaar Front" style={S.docImg} />
+                      <DocVerify role="applicant" field="aadharFront" label="Aadhaar Front" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -558,7 +600,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>PAN Image</b></div>
                   {applicantData?.panImage ? (
-                    <FilePreview src={applicantData.panImage} alt="PAN" style={S.docImg} />
+                    <>
+                      <FilePreview src={applicantData.panImage} alt="PAN" style={S.docImg} />
+                      <DocVerify role="applicant" field="panImage" label="PAN Card" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -577,7 +622,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Back</b></div>
                   {applicantData?.aadharBack ? (
-                    <FilePreview src={applicantData.aadharBack} alt="Aadhaar Back" style={S.docImg} />
+                    <>
+                      <FilePreview src={applicantData.aadharBack} alt="Aadhaar Back" style={S.docImg} />
+                      <DocVerify role="applicant" field="aadharBack" label="Aadhaar Back" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -601,7 +649,10 @@ export default function ApplicationView() {
                   <div style={S.fieldLabel}><b>Profile</b></div>
                   <div style={S.imgThumbBox}>
                     {app?.coApplicant?.photo ? (
-                      <FilePreview src={app.coApplicant.photo} alt="Co-Applicant" style={S.imgThumb} />
+                      <>
+                        <FilePreview src={app.coApplicant.photo} alt="Co-Applicant" style={S.imgThumb} />
+                        <DocVerify role="coApplicant" field="photo" label="Photograph" />
+                      </>
                     ) : (
                       <span style={S.noImgText}>No Image</span>
                     )}
@@ -616,7 +667,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Front</b></div>
                   {app?.coApplicant?.aadharFront ? (
-                    <FilePreview src={app.coApplicant.aadharFront} alt="Aadhaar Front" style={S.docImg} />
+                    <>
+                      <FilePreview src={app.coApplicant.aadharFront} alt="Aadhaar Front" style={S.docImg} />
+                      <DocVerify role="coApplicant" field="aadharFront" label="Aadhaar Front" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -625,7 +679,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Back</b></div>
                   {app?.coApplicant?.aadharBack ? (
-                    <FilePreview src={app.coApplicant.aadharBack} alt="Aadhaar Back" style={S.docImg} />
+                    <>
+                      <FilePreview src={app.coApplicant.aadharBack} alt="Aadhaar Back" style={S.docImg} />
+                      <DocVerify role="coApplicant" field="aadharBack" label="Aadhaar Back" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -634,7 +691,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>PAN Image</b></div>
                   {app?.coApplicant?.panImage ? (
-                    <FilePreview src={app.coApplicant.panImage} alt="PAN" style={S.docImg} />
+                    <>
+                      <FilePreview src={app.coApplicant.panImage} alt="PAN" style={S.docImg} />
+                      <DocVerify role="coApplicant" field="panImage" label="PAN Card" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -643,7 +703,10 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Form 60</b></div>
                   {app?.coApplicant?.form60 ? (
-                    <FilePreview src={app.coApplicant.form60} alt="Form 60" style={S.docImg} />
+                    <>
+                      <FilePreview src={app.coApplicant.form60} alt="Form 60" style={S.docImg} />
+                      <DocVerify role="coApplicant" field="form60" label="Form 60" />
+                    </>
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -841,6 +904,12 @@ export default function ApplicationView() {
             </div>
           </div>
 
+          {/* ──── Approval readiness ────
+               Rendered as the last block of the content column, directly above
+               the action bar. The bar itself is position:fixed, so placing the
+               checklist inside it would turn it into an overlay. */}
+          <LoanApprovalChecklist checklist={app?.checklist} />
+
           {/* ──── Floating Buttons ──── */}
           <div style={S.floatingBtns}>
             <button
@@ -860,12 +929,15 @@ export default function ApplicationView() {
             {isFinalStage(app?.workflowStage) ? (
               <button
                 onClick={handleApprove}
-                disabled={approving}
+                // Blocked only by requirements the approval endpoint itself
+                // enforces, so nothing approvable today becomes unapprovable.
+                disabled={approving || approvalBlocked}
+                title={approvalBlocked ? app?.checklist?.approval?.message : undefined}
                 style={{
                   ...S.actionBtn,
-                  backgroundColor: approving ? "#d1fae5" : "white",
-                  color: approving ? "#065f46" : "black",
-                  cursor: approving ? "not-allowed" : "pointer",
+                  backgroundColor: approving ? "#d1fae5" : approvalBlocked ? "#f1f5f9" : "white",
+                  color: approving ? "#065f46" : approvalBlocked ? "#94a3b8" : "black",
+                  cursor: approving || approvalBlocked ? "not-allowed" : "pointer",
                 }}
               >
                 {approving ? "Approving…" : "Approve"}

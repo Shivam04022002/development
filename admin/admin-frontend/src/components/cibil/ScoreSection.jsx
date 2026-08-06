@@ -52,7 +52,8 @@ export default function ScoreSection({ score }) {
         <div className="cr-score-body">
           <div>
             <div className="cr-score-name">
-              {show(score.name, "Enhanced CreditVision")}{" "}
+              {show(score.name, "Enhanced CreditVision")}
+              <span className="cr-reg">®</span>{" "}
               <span className="cr-score-word">Score</span>
             </div>
             <div className="cr-score-range">

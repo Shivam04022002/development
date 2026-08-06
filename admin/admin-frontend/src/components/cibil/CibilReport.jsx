@@ -67,7 +67,7 @@ export default function CibilReport({ model, statusMessage = null }) {
             ]} />
           </div>
         </section>
-        <ReportFooter header={model.header} consumerName={model.consumer.name} />
+        <ReportFooter consumerName={model.consumer.name} />
       </div>
     );
   }
@@ -82,7 +82,7 @@ export default function CibilReport({ model, statusMessage = null }) {
       <EnquirySummary summary={model.summary.enquiries} />
 
       <section className="cr-section">
-        <h2 className="cr-h2">CreditVision Algorithm(s)</h2>
+        <h2 className="cr-h2">CreditVision® Algorithm(s)</h2>
         <div className="cr-box cr-algo-box">
           {model.creditVision.algorithms.length === 0 ? (
             <>
@@ -113,7 +113,7 @@ export default function CibilReport({ model, statusMessage = null }) {
       <EnquiryTable enquiries={model.enquiries} />
 
       <Glossary />
-      <ReportFooter header={model.header} consumerName={model.consumer.name} />
+      <ReportFooter consumerName={model.consumer.name} />
     </div>
   );
 }

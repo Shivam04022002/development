@@ -1,6 +1,7 @@
 // models/ApprovedApplication.js
 import mongoose from "mongoose";
 import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
+import { documentVerification } from "./documentVerificationSchemas.js";
 
 const approvedApplicationSchema = new mongoose.Schema(
   {
@@ -32,6 +33,10 @@ const approvedApplicationSchema = new mongoose.Schema(
     rcDetails,
     numberPlateDetails,
     spdcDetails,
+
+    // Mirrors the Admin Backend so a dealer replacement on an approved record
+    // is not stripped by strict mode.
+    documentVerification,
   },
   { timestamps: true }
 );

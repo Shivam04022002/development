@@ -35,6 +35,11 @@ const creditNoteSchema = new mongoose.Schema(
 
     // Relative path to the generated PDF under uploads/ (Phase 7).
     pdfPath: { type: String, default: "" },
+    // Set when the note's details change after the PDF was rendered — currently
+    // only by an Applicant/Co-Applicant swap, which leaves the stored PDF
+    // showing the previous applicant. The file is never overwritten silently;
+    // the note must be regenerated before the workflow advances.
+    pdfOutdated: { type: Boolean, default: false },
 
     // Audit
     createdBy: { type: String, default: "" },

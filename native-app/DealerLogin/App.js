@@ -21,6 +21,7 @@ import RCUploadListScreen from './screens/RCUploadListScreen';
 import RCUploadDetailsScreen from './screens/RCUploadDetailsScreen';
 import NumberPlateUploadListScreen from './screens/NumberPlateUploadListScreen';
 import NumberPlateUploadDetailsScreen from './screens/NumberPlateUploadDetailsScreen';
+import DealerActionCenterScreen from './screens/DealerActionCenterScreen';
 import { createNavigationContainerRef } from '@react-navigation/native';
 
 import Toast from 'react-native-toast-message';
@@ -269,6 +270,8 @@ export default function App() {
           {/* Number Plate Upload module */}
           <Stack.Screen name="NumberPlateUploadScreen" component={NumberPlateUploadListScreen} options={{ headerShown: false }} />
           <Stack.Screen name="NumberPlateUploadDetails" component={NumberPlateUploadDetailsScreen} options={{ headerShown: false }} />
+          {/* Dealer Action Center */}
+          <Stack.Screen name="DealerActionCenter" component={DealerActionCenterScreen} options={{ headerShown: false }} />
         </Stack.Navigator>
       </NavigationContainer>
       <Toast />

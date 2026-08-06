@@ -19,6 +19,7 @@ import healthRoutes from './routes/healthRoutes.js';
 import rcRoutes from './routes/rcRoutes.js';
 import numberPlateRoutes from './routes/numberPlateRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import dealerActionRoutes from './routes/dealerActionRoutes.js';
 import { secureHeaders, rateLimit } from './middleware/security.js';
 import { logError } from './utils/log.js';
 import { UPLOADS_ROOT } from './utils/fileStorage.js';
@@ -106,6 +107,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/rc', rcRoutes);
 app.use('/api/number-plate', numberPlateRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+// Dealer Action Center (dealer response workflow)
+app.use('/api/dealer-actions', dealerActionRoutes);
 
 // Health check
 app.get('/api/test', (req, res) => {

@@ -5,6 +5,7 @@ import api from "../services/api";
 import FilePreview from "../components/FilePreview";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import { stageLabel } from "../utils/workflowConfig";
+import AssignmentPanel from "../components/AssignmentPanel";
 
 
 export default function ApprovedApplicationView() {
@@ -41,6 +42,17 @@ export default function ApprovedApplicationView() {
   }, [id]);
 
   const goBack = () => navigate(-1);
+
+  // Re-read through the same endpoint the initial load uses, so an assignment
+  // change is reflected without a page reload.
+  const refreshApplication = async () => {
+    try {
+      const { data } = await api.get(`/workflow/applications/approved/${id}`);
+      setApp(data);
+    } catch (err) {
+      console.error("Refresh failed:", err?.response?.data || err.message);
+    }
+  };
 
 
   if (loading) {
@@ -114,6 +126,13 @@ export default function ApprovedApplicationView() {
 
       {/* RIGHT: content cards */}
       <main style={styles.content}>
+        {/* Task ownership — approved work can still be closed out */}
+        <AssignmentPanel
+          applicationId={app?._id}
+          assignment={app?.assignment}
+          onChanged={refreshApplication}
+        />
+
         <Section title="Applicant" refProp={applicantRef}>
             <Grid three style={{ marginTop: 10, marginBottom: 20 }}>
             <ImageField label="Photo" src={applicant?.photo} />
