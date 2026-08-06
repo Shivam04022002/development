@@ -24,6 +24,7 @@ import {
 } from "../utils/accessFilter.js";
 import { logEvent } from "../utils/log.js";
 import { escapeRegex } from "../utils/escapeRegex.js";
+import { initVehicleDocs } from "../utils/vehicleDocs.js";
 
 /**
  * Augment a lean application document with normalized, flat fields for list
@@ -492,6 +493,10 @@ export const updateWorkflowStage = async (req, res) => {
         updatedAt: new Date(),      // approval time (generic; later saves may rewrite it)
         approvedAt: new Date(),     // dedicated, immutable approval timestamp (source for Processing Days)
         history: app.history,
+        // RC & Number Plate: initialise both sections to "Pending" so the
+        // application becomes eligible for dealer upload. Carry-forward only —
+        // an already-uploaded section is never overwritten.
+        ...initVehicleDocs(app),
       });
       await approvedDoc.save({ timestamps: false });
     }
@@ -596,6 +601,10 @@ async function approveApplicationCore(id, admin, note) {
           changes: "Application approved and moved to Approved collection",
         },
       ],
+      // RC & Number Plate: initialise both sections to "Pending" so the
+      // application becomes eligible for dealer upload. Carry-forward only —
+      // an already-uploaded section is never overwritten.
+      ...initVehicleDocs(app),
     });
     await approvedDoc.save({ timestamps: false });
   }

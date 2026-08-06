@@ -17,6 +17,10 @@ import DealerProfileScreen from './screens/DealerProfileScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import ApplicationDetailsScreen from './screens/ApplicationDetailsScreen';
 import CibilStatusScreen from './screens/CibilStatusScreen';
+import RCUploadListScreen from './screens/RCUploadListScreen';
+import RCUploadDetailsScreen from './screens/RCUploadDetailsScreen';
+import NumberPlateUploadListScreen from './screens/NumberPlateUploadListScreen';
+import NumberPlateUploadDetailsScreen from './screens/NumberPlateUploadDetailsScreen';
 import { createNavigationContainerRef } from '@react-navigation/native';
 
 import Toast from 'react-native-toast-message';
@@ -259,6 +263,12 @@ export default function App() {
             component={CibilStatusScreen}
             options={{ headerShown: false, gestureEnabled: false }}
           />
+          {/* RC Upload module */}
+          <Stack.Screen name="RCUploadScreen" component={RCUploadListScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="RCUploadDetails" component={RCUploadDetailsScreen} options={{ headerShown: false }} />
+          {/* Number Plate Upload module */}
+          <Stack.Screen name="NumberPlateUploadScreen" component={NumberPlateUploadListScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="NumberPlateUploadDetails" component={NumberPlateUploadDetailsScreen} options={{ headerShown: false }} />
         </Stack.Navigator>
       </NavigationContainer>
       <Toast />

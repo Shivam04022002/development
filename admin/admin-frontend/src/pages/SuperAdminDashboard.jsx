@@ -2002,6 +2002,9 @@ table th {
             <button className={tab === "dealerActivity" ? "active" : ""} onClick={() => setTab("dealerActivity")}>
               Activity
             </button>
+            <button onClick={() => navigate("/superadmin/rc-number-plate")}>
+              RC &amp; Number Plate
+            </button>
             <button onClick={() => navigate("/superadmin/cibil-settings")}>
               CIBIL Settings
             </button>

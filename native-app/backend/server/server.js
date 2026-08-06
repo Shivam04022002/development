@@ -16,6 +16,9 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 import healthRoutes from './routes/healthRoutes.js';
+import rcRoutes from './routes/rcRoutes.js';
+import numberPlateRoutes from './routes/numberPlateRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
 import { secureHeaders, rateLimit } from './middleware/security.js';
 import { logError } from './utils/log.js';
 import { UPLOADS_ROOT } from './utils/fileStorage.js';
@@ -71,9 +74,21 @@ app.use('/api', rateLimit({ windowMs: 60_000, max: 300 }));
 // and any other document — are NOT public; they are served only via the
 // authenticated /api/files route. This prevents leaking sensitive files.
 const PUBLIC_IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
+
+// Phase 7 — RC, Number Plate and SPDC images are NOT public. Nothing renders
+// them from a public URL (the dealer app only uploads them; the admin portal
+// reads them through the authenticated /api/files route), so serving them here
+// would expose vehicle documents to anyone who can guess a loan number. Matched
+// on the exact basenames written by the vehicle-document endpoints, so the
+// pre-existing vehicle photos in the same folder keep working.
+const PRIVATE_DOC_BASENAMES = /^(rc-front|rc-back|number-plate|spdc)\.[a-z0-9]+$/i;
+
 app.use('/files', (req, res, next) => {
   const ext = path.extname(req.path).toLowerCase();
   if (!PUBLIC_IMAGE_EXT.has(ext)) return res.status(404).json({ error: 'Not found' });
+  if (PRIVATE_DOC_BASENAMES.test(path.basename(req.path))) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   next();
 }, express.static(UPLOADS_ROOT, { fallthrough: false, index: false, dotfiles: 'deny' }));
 
@@ -87,6 +102,10 @@ app.use('/api/rejected', rejectedFilesRoutes);
 app.use('/api/approved-files', approvedFilesRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/notifications', notificationRoutes);
+// RC & Number Plate module (dealer side)
+app.use('/api/rc', rcRoutes);
+app.use('/api/number-plate', numberPlateRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Health check
 app.get('/api/test', (req, res) => {

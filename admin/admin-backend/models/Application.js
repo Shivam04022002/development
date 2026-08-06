@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
 
 /**
  * Application — the SINGLE source of truth for a loan application.
@@ -112,6 +113,16 @@ const applicationSchema = new mongoose.Schema(
       requestId: { type: String, default: "" },
       fetchedAt: { type: Date, default: null },
     },
+
+    // ── RC & Number Plate module ─────────────────────────────────────────────
+    // Additive sections, shared verbatim with ApprovedApplication (see
+    // vehicleDocSchemas.js). They stay "Pending" here and become actionable
+    // once the application is approved — the dealer's pending lists read the
+    // approved copy. Declared here so an in-flight application carries them
+    // through approval instead of having them invented at that moment.
+    rcDetails,
+    numberPlateDetails,
+    spdcDetails,
   },
   { timestamps: true }
 );

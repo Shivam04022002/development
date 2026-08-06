@@ -16,6 +16,15 @@ export const UPLOADS_ROOT = process.env.UPLOADS_ROOT
   ? path.resolve(process.env.UPLOADS_ROOT)
   : path.resolve(__dirname, "../../../uploads");
 
+// Upload constraints. Identical to the Mobile Backend's copy of this module so
+// a file accepted by one service is accepted by the other — there is one set of
+// rules for the shared uploads root, not two.
+export const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "pdf"];
+export const ALLOWED_MIME = [
+  "image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp", "application/pdf",
+];
+export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15MB
+
 export function ensureDir(absDir) {
   fs.mkdirSync(absDir, { recursive: true });
 }
@@ -99,4 +108,5 @@ export async function writeAppFile(formId, relSubParts, data) {
 export default {
   UPLOADS_ROOT, ensureDir, absFromRel, relFromAbs, appDirAbs, appRel,
   toLocalRel, moveIntoApp, writeAppFile,
+  ALLOWED_EXT, ALLOWED_MIME, MAX_FILE_BYTES,
 };

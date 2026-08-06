@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import cors from 'cors';
 import adminRoutes from './routes/adminRoutes.js';
+import vehicleRoutes from './routes/vehicleRoutes.js';
 import workflowRoutes from './routes/workflowRoutes.js';
 import applicationRoutes from './routes/applicationRoutes.js';
 import authRoutes from "./routes/authRoutes.js";
@@ -128,6 +129,10 @@ app.get('/api/health', (req, res) => {
 });
 
 // Routes
+// RC & Number Plate module. Mounted BEFORE adminRoutes so the more specific
+// prefix always wins — adminRoutes defines no /vehicle path, but relying on
+// fall-through would make this order-sensitive for no reason.
+app.use('/api/admin/vehicle', vehicleRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/applications', applicationRoutes);

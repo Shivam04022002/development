@@ -1,5 +1,6 @@
 // models/ApprovedApplication.js
 import mongoose from "mongoose";
+import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
 
 const approvedApplicationSchema = new mongoose.Schema(
   {
@@ -23,8 +24,16 @@ const approvedApplicationSchema = new mongoose.Schema(
         changes: String,
       },
     ],
+
+    // ── RC & Number Plate module ─────────────────────────────────────────────
+    // Written by the dealer upload endpoints in this backend, read by the
+    // pending lists and vehicle counts. Same definition the Admin Backend uses
+    // for this collection (see vehicleDocSchemas.js).
+    rcDetails,
+    numberPlateDetails,
+    spdcDetails,
   },
-  { timestamps: true } 
+  { timestamps: true }
 );
 
 export default mongoose.models.ApprovedApplication

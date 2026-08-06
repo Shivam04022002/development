@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -13,6 +13,12 @@ const ORANGE = "#FF9100";
 const YELLOW = "#FFD600";
 const GREEN = "#34C759";
 const RED = "#FF3B30";
+// RC Upload / Number Plate. Same iOS system palette the four cards above use.
+const BLUE = "#007AFF";
+const PURPLE = "#AF52DE";
+
+// Shown in place of a count when the vehicle-counts request has never succeeded.
+const COUNT_UNAVAILABLE = "--";
 
 const DEFAULT_POLL_INTERVAL = 5000;
 // Set true to see detailed logs in Metro/console
@@ -25,6 +31,12 @@ export default function DashboardScreen({ navigation }) {
   const [pendingFilesCount, setPendingFilesCount] = useState(0);
   const [approvedFilesCount, setApprovedFilesCount] = useState(0);
   const [rejectedFilesCount, setRejectedFilesCount] = useState(0);
+
+  // RC / Number Plate counts. `null` means "no successful response yet", which
+  // is what drives the loading placeholder — the cards must not show 0 before
+  // the API has answered.
+  const [vehicleCounts, setVehicleCounts] = useState(null);
+  const [vehicleCountsFailed, setVehicleCountsFailed] = useState(false);
 
   const intervalRef = useRef(null);
 
@@ -45,6 +57,7 @@ export default function DashboardScreen({ navigation }) {
 
         // immediate fetch then polling
         await fetchCounts(true);
+        await fetchVehicleCounts();
 
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
@@ -54,7 +67,10 @@ export default function DashboardScreen({ navigation }) {
         const pollIntervalStr = await AsyncStorage.getItem("pollInterval");
         const pollInterval = pollIntervalStr ? Number(pollIntervalStr) : DEFAULT_POLL_INTERVAL;
 
-        intervalRef.current = setInterval(() => fetchCounts(true), pollInterval);
+        intervalRef.current = setInterval(() => {
+          fetchCounts(true);
+          fetchVehicleCounts();
+        }, pollInterval);
       };
 
       load();
@@ -252,11 +268,50 @@ export default function DashboardScreen({ navigation }) {
     }
   };
 
+  /**
+   * RC / Number Plate pending counts.
+   *
+   * ONE request per refresh cycle: the endpoint returns both numbers together,
+   * so the two cards are never fetched separately.
+   *
+   * Uses the same fetch + AsyncStorage token pattern as fetchCounts above,
+   * deliberately: a failure here is contained to these two cards and can never
+   * disturb the rest of the dashboard.
+   */
+  const fetchVehicleCounts = async () => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const headers = token
+        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+        : { "Content-Type": "application/json" };
+
+      const res = await fetch(`${API_BASE}/api/dashboard/vehicle-counts`, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const json = await res.json();
+      setVehicleCounts({
+        rcPending: Number(json?.rcPending) || 0,
+        numberPlatePending: Number(json?.numberPlatePending) || 0,
+      });
+      setVehicleCountsFailed(false);
+    } catch (err) {
+      if (DEBUG) console.warn("Error in fetchVehicleCounts:", err?.message || err);
+      // Never clear counts we already have — a failed poll should not make a
+      // good number flicker to "--". The placeholder is only for the case
+      // where no successful response has ever arrived.
+      setVehicleCountsFailed(true);
+    }
+  };
+
   const handleLogout = async () => {
     console.log('[Dashboard] Logging out (lock session)');
     await clearSession();
     navigation.replace("Login");
   };
+
+  // Placeholder until the first response lands. After a failure with no data
+  // the cards fall through to COUNT_UNAVAILABLE rather than spinning forever.
+  const vehicleLoading = vehicleCounts === null && !vehicleCountsFailed;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#ffffff" }}>
@@ -298,6 +353,27 @@ export default function DashboardScreen({ navigation }) {
               borderColor={RED}
               onPress={() => navigation.navigate("RejectedFiles")}
             />
+
+            <View style={styles.cardRow}>
+              <DashboardCard
+                title="RC Upload"
+                count={vehicleCounts ? vehicleCounts.rcPending : COUNT_UNAVAILABLE}
+                loading={vehicleLoading}
+                icon={<MaterialIcons name="description" size={28} color={BLUE} />}
+                borderColor={BLUE}
+                style={styles.rowCardFirst}
+                onPress={() => navigation.navigate("RCUploadScreen")}
+              />
+              <DashboardCard
+                title="Number Plate"
+                count={vehicleCounts ? vehicleCounts.numberPlatePending : COUNT_UNAVAILABLE}
+                loading={vehicleLoading}
+                icon={<MaterialIcons name="directions-car" size={28} color={PURPLE} />}
+                borderColor={PURPLE}
+                style={styles.rowCardSecond}
+                onPress={() => navigation.navigate("NumberPlateUploadScreen")}
+              />
+            </View>
           </View>
 
           <View style={{ flex: 1, justifyContent: "flex-end" }}>
@@ -309,17 +385,23 @@ export default function DashboardScreen({ navigation }) {
   );
 }
 
-function DashboardCard({ title, count, icon, borderColor, onPress }) {
+// `style` and `loading` are optional additions for the RC / Number Plate row.
+// Omitted, the component renders exactly as it did before.
+function DashboardCard({ title, count, icon, borderColor, onPress, style, loading = false }) {
   return (
     <TouchableOpacity
-      style={[styles.card, { borderColor }]}
+      style={[styles.card, { borderColor }, style]}
       activeOpacity={0.85}
       onPress={onPress}
     >
       <View style={styles.cardContent}>
-        <View>
-          <Text style={styles.cardTitle}>{title}</Text>
-          <Text style={styles.cardCount}>{count}</Text>
+        <View style={styles.cardText}>
+          <Text style={styles.cardTitle} numberOfLines={1}>{title}</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color={borderColor} style={styles.cardLoader} />
+          ) : (
+            <Text style={styles.cardCount}>{count}</Text>
+          )}
         </View>
         <View style={styles.iconWrap}>{icon}</View>
       </View>
@@ -345,10 +427,30 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 20,
   },
+  // RC Upload + Number Plate share one row. The 18pt gutter between them is the
+  // same value as the vertical gap between the stacked cards above (card
+  // marginBottom), so the grid rhythm is unchanged.
+  cardRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  rowCardFirst: {
+    flex: 1,
+    marginRight: 9,
+  },
+  rowCardSecond: {
+    flex: 1,
+    marginLeft: 9,
+  },
   cardContent: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  // Lets a long title shrink instead of pushing the icon out of a half-width
+  // card. No effect on the full-width cards, which never overflow.
+  cardText: {
+    flexShrink: 1,
   },
   cardTitle: {
     fontSize: 17,
@@ -361,6 +463,13 @@ const styles = StyleSheet.create({
     color: "#171717",
     fontWeight: "bold",
     marginTop: 4,
+  },
+  // Occupies the same vertical space as cardCount so the card does not resize
+  // when the count arrives.
+  cardLoader: {
+    height: 34,
+    marginTop: 4,
+    alignSelf: "flex-start",
   },
   iconWrap: {
     backgroundColor: "#fff4e3",

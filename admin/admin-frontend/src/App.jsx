@@ -15,6 +15,8 @@ import PendingCibilView from "./pages/PendingCibilView";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import CibilReportQA from "./pages/CibilReportQA";
 import CreditUnderwritingQA from "./pages/CreditUnderwritingQA";
+import RCNumberPlatePage from "./pages/RCNumberPlatePage";
+import VehicleDetailsPage from "./pages/VehicleDetailsPage";
 
 // Feature flag: the CIBIL report QA harness ships only in non-production
 // builds, or when VITE_CIBIL_QA=1 is set explicitly.
@@ -60,6 +62,10 @@ const App = () => {
 
       {/*  Super Admin → System Settings → CIBIL Configuration */}
       <Route path="/superadmin/cibil-settings" element={<CibilSettings />} />
+
+      {/*  RC & Number Plate (Phase 5) + Vehicle Details (Phase 6) */}
+      <Route path="/superadmin/rc-number-plate" element={<RCNumberPlatePage />} />
+      <Route path="/vehicle-details/:applicationId" element={<VehicleDetailsPage />} />
 
       {/*  Catch-all fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
