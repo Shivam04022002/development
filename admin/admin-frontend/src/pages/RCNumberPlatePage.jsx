@@ -7,10 +7,10 @@
 // GET /api/admin/vehicle/list exposes no sort parameter and this phase must not
 // change the backend (see the report's Known Limitations).
 //
-// UI: this page uses the shared admin chrome — DashboardLayout (which carries
-// the shared Navbar) and the same Bootstrap list-page idiom as Pending /
-// Approved / Rejected Applications. It defines no layout, palette or table of
-// its own.
+// UI: this page renders the portal's shared top navigation (SuperAdminNav,
+// extracted from SuperAdminDashboard) with "RC & Number Plate" active, over the
+// same Bootstrap list-page idiom the other admin lists use. It defines no
+// navigation, layout, palette or table of its own.
 //
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -21,7 +21,7 @@ import {
   flexRender,
 } from "@tanstack/react-table";
 import API from "../services/api";
-import DashboardLayout from "../components/layout/DashboardLayout";
+import SuperAdminNav from "../components/SuperAdminNav";
 import TableSkeleton from "../components/TableSkeleton";
 import StatusBadge from "../components/StatusBadge";
 import DealerFilterSelect from "../components/DealerFilterSelect";
@@ -234,13 +234,12 @@ export default function RCNumberPlatePage() {
   }, [items]);
 
   return (
-    <DashboardLayout>
-      {/* The layout's content row is fixed-height and clipped, so list pages
-          scroll inside it — the same arrangement the detail pages use. */}
-      <div style={{ flex: 1, overflowY: "auto" }}>
-        {/* Full width: the table has eight columns and was being squeezed into
-            a centred container. */}
-        <div className="container-fluid px-4 py-3">
+    <div style={{ minHeight: "100vh", background: "#F8FAFC", padding: 24, boxSizing: "border-box" }}>
+      <SuperAdminNav active="rcNumberPlate" />
+      {/* Full width: the table has eight columns and was being squeezed into
+          a centred container. */}
+      <div>
+        <div className="container-fluid px-0">
           {/* Header */}
           <div className="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
             <div>
@@ -385,6 +384,6 @@ export default function RCNumberPlatePage() {
           )}
         </div>
       </div>
-    </DashboardLayout>
+    </div>
   );
 }

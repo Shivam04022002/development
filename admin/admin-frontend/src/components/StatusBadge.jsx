@@ -15,6 +15,11 @@ import React from "react";
 const CONFIG = {
   pending: { bg: "#FFF7ED", color: "#92400E", border: "#FDE3BF", label: "Pending" },
   uploaded: { bg: "#ECFDF5", color: "#065F46", border: "#D1FAE5", label: "Uploaded" },
+  // Additive. The vehicle endpoints only ever emit Pending/Uploaded today, so
+  // these are here so one badge system covers every state the portal shows —
+  // an unknown status still falls back to Pending, exactly as before.
+  verified: { bg: "#EFF6FF", color: "#1D4ED8", border: "#BFDBFE", label: "Verified" },
+  rejected: { bg: "#FFF1F2", color: "#7F1D1D", border: "#FECACA", label: "Rejected" },
 };
 
 export default function StatusBadge({ status }) {

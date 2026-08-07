@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import API from "../services/api"; // baseURL already set in your project
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
+import SuperAdminNav from "../components/SuperAdminNav";
 import logo from "../assets/logo-surjit.png";
 import * as XLSX from 'xlsx';
 import FilesManagementTable from "../components/FilesManagementTable";
@@ -736,28 +737,11 @@ const SuperAdminDashboard = () => {
   const [busy, setBusy] = useState(false);
 
   const gridRef = useRef(null);
-  const btnRef = useRef(null);
-  const menuRef = useRef(null);
-  const [open, setOpen] = useState(false);
-
   // Get selected workflows for the current form
   const stageArray = useMemo(
     () => editingAdmin ? editForm.selectedWorkflows : form.selectedWorkflows,
     [form.selectedWorkflows, editForm.selectedWorkflows, editingAdmin]
   );
-
-  const styles = {
-    userBtn: {
-      border: "1px solid #e5e7eb",
-      background: "#fff",
-      padding: "8px 10px",
-      borderRadius: 10,
-      cursor: "pointer",
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-  };
 
   const authHeaders = () => {
     const token = localStorage.getItem("adminToken");
@@ -1016,21 +1000,6 @@ const SuperAdminDashboard = () => {
   }, [editingDealer]);
 
   // ===== Handlers =====
-  const handleLogout = () => {
-    try {
-      if (typeof logout === "function") logout();
-    } catch (e) {
-      console.warn("logout() threw:", e);
-    }
-    try {
-      localStorage.removeItem("adminToken");
-      localStorage.removeItem("adminInfo");
-    } catch (err) {
-      console.warn("Failed to clear admin tokens:", err);
-    }
-    navigate("/");
-  };
-
   const createAdmin = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -1793,36 +1762,6 @@ const SuperAdminDashboard = () => {
   box-sizing: border-box;
 }
 
-/* Top bar */
-.dash-bar{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:12px;
-  padding:12px 18px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(250,250,250,0.9));
-  border: 1px solid rgba(14,20,36,0.04);
-  box-shadow: var(--card-ring);
-  margin-bottom: 18px;
-}
-
-/* segmented controls */
-.seg{ display:inline-flex; padding:6px; background: rgba(241,245,249,0.7); border-radius:999px; gap:6px; }
-.seg button{
-  border:0; background:transparent; padding:8px 14px; border-radius:999px; font-weight:700; color:var(--muted);
-  cursor: pointer; transition: all var(--transition);
-  letter-spacing: .2px;
-}
-.seg button.active{
-  background: #fff;
-  color: var(--ink);
-  box-shadow: var(--shadow-soft);
-  transform: translateY(-1px);
-}
-
-/* counts / badges */
-.badge{ display:inline-block; font-size:11px; font-weight:800; padding:4px 8px; border-radius:999px; margin-left:8px; background: #eef2ff; color: var(--blue); }
 
 /* responsive grid */
 .grid{
@@ -1932,8 +1871,6 @@ label > input[type="checkbox"]{
 }
 @media (max-width: 520px){
   .card{ grid-column: span 12; }
-  .seg{ display:flex; gap:4px; overflow:auto; padding:4px 6px; }
-  .seg button{ padding:6px 10px; font-size:13px; }
 }
 
 /* modal */
@@ -1976,98 +1913,12 @@ table th {
 }
       `}</style>
 
-      {/* Top bar */}
-      <div className="dash-bar">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img src={logo} alt="Logo" style={{ height: 40, marginBottom: 4 }} />
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div className="seg">
-            <button className={tab === "admins" ? "active" : ""} onClick={() => setTab("admins")}>
-              Admins <span className="badge b-approved">{admins.length}</span>
-            </button>
-            <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>
-              Summary <span className="badge b-approved">{summary.length}</span>
-            </button>
-            <button className={tab === "stats" ? "active" : ""} onClick={() => setTab("stats")}>
-              Stats
-            </button>
-            <button className={tab === "files" ? "active" : ""} onClick={() => setTab("files")}>
-              Files
-            </button>
-            <button className={tab === "dealers" ? "active" : ""} onClick={() => setTab("dealers")}>
-              Dealers <span className="badge b-approved">{dealers.length}</span>
-            </button>
-            <button className={tab === "dealerActivity" ? "active" : ""} onClick={() => setTab("dealerActivity")}>
-              Activity
-            </button>
-            <button onClick={() => navigate("/superadmin/rc-number-plate")}>
-              RC &amp; Number Plate
-            </button>
-            <button onClick={() => navigate("/superadmin/cibil-settings")}>
-              CIBIL Settings
-            </button>
-          </div>
-
-          <div style={{ position: "relative" }}>
-            <button
-              ref={btnRef}
-              onClick={() => setOpen((v) => !v)}
-              style={styles.userBtn}
-              aria-haspopup="menu"
-              aria-expanded={open ? "true" : "false"}
-              title="Account"
-            >
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 12a5 5 0 100-10 5 5 0 000 10zM21 22a9 9 0 10-18 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </button>
-
-            {open && (
-              <div
-                ref={menuRef}
-                style={{
-                  position: "absolute",
-                  right: 0,
-                  marginTop: 8,
-                  minWidth: 200,
-                  background: "#fff",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 8,
-                  boxShadow: "0 10px 30px rgba(2,6,23,0.08)",
-                  padding: 10,
-                  zIndex: 9999,
-                }}
-                role="menu"
-                aria-label="Account menu"
-              >
-                <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>
-                  {admin?.name || "Super Admin"}
-                </div>
-                {admin?.email && (
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>{admin.email}</div>
-                )}
-                <button
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#ef4444",
-                    color: "#fff",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                  onClick={handleLogout}
-                >
-                  Logout
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Top bar — the shared component; this page no longer owns a copy. */}
+      <SuperAdminNav
+        active={tab}
+        onSelect={setTab}
+        counts={{ admins: admins.length, summary: summary.length, dealers: dealers.length }}
+      />
 
       {/* Content */}
       {tab === "admins" && (

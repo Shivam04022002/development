@@ -6,6 +6,7 @@
 //
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import SuperAdminNav from "../components/SuperAdminNav";
 import API from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
@@ -164,22 +165,15 @@ export default function CibilSettings() {
   };
 
   return (
-    <div style={{ background: "#F8FAFC", minHeight: "100vh", padding: "24px 0" }}>
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <div>
-            <h2 style={{ color: BRAND.blue, fontWeight: 800, margin: 0 }}>CIBIL Configuration</h2>
-            <p style={{ color: "#6B7280", margin: "4px 0 0" }}>
-              System-wide credit-bureau settings. Configuration only — no API is called.
-            </p>
-          </div>
-          <button
-            className="btn btn-outline-secondary"
-            onClick={() => navigate("/superadmin-dashboard")}
-          >
-            ← Back
-          </button>
+    <div style={{ background: "#F8FAFC", minHeight: "100vh", padding: 24, boxSizing: "border-box" }}>
+      <SuperAdminNav active="cibilSettings" />
+      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        {/* Header — the shared navigation replaces the standalone back button. */}
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ color: BRAND.blue, fontWeight: 800, margin: 0 }}>CIBIL Configuration</h2>
+          <p style={{ color: "#6B7280", margin: "4px 0 0" }}>
+            System-wide credit-bureau settings. Configuration only — no API is called.
+          </p>
         </div>
 
         {toast && (

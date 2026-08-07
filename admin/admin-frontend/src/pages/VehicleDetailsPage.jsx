@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../services/api";
-import { useAuth } from "../context/AuthContext";
+import SuperAdminNav from "../components/SuperAdminNav";
 import TableSkeleton from "../components/TableSkeleton";
 import StatusBadge from "../components/StatusBadge";
 import FilePreview from "../components/FilePreview";
@@ -33,53 +33,63 @@ const fmtAmount = (v) =>
 const normalisePlate = (v) => String(v ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 
 /* ─── Presentational bits, matching the portal's card language ───────────── */
-const Card = ({ title, right, children }) => (
-  <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, marginBottom: 22, overflow: "hidden", boxShadow: "0 2px 12px rgba(11,31,77,0.06)" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 22px", background: "#FAFBFC", borderBottom: "1px solid #F1F5F9" }}>
-      <span style={{ fontSize: 12, fontWeight: 800, color: "#374151", textTransform: "uppercase", letterSpacing: "0.6px" }}>
-        {title}
-      </span>
+
+/** Card — one radius, one padding, one shadow, used by every section. */
+const Card = ({ title, subtitle, right, children }) => (
+  <section style={S.card}>
+    <header style={S.cardHead}>
+      <div>
+        <h3 style={S.cardTitle}>{title}</h3>
+        {subtitle ? <p style={S.cardSubtitle}>{subtitle}</p> : null}
+      </div>
       {right}
+    </header>
+    <div style={S.cardBody}>{children}</div>
+  </section>
+);
+
+/** One customer field: icon, label, value. Tiles flow in a responsive grid. */
+const InfoTile = ({ icon, label, value }) => (
+  <div style={S.tile}>
+    <span style={S.tileIcon} aria-hidden="true">{icon}</span>
+    <div style={{ minWidth: 0 }}>
+      <div style={S.tileLabel}>{label}</div>
+      <div style={S.tileValue} title={typeof value === "string" ? value : undefined}>
+        {value || "—"}
+      </div>
     </div>
-    <div style={{ padding: 22 }}>{children}</div>
   </div>
 );
 
-const ReadOnlyField = ({ label, value }) => (
-  <div style={{ minWidth: 180, flex: "1 1 180px" }}>
-    <div style={{ fontSize: 11, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>
-      {label}
-    </div>
-    <div style={{ fontSize: 14.5, color: "#0f172a", fontWeight: 600 }}>{value || "—"}</div>
+/** Centred empty state — an icon, what is missing, and what to do about it. */
+const EmptyState = ({ icon, title, hint }) => (
+  <div style={S.empty}>
+    <div style={S.emptyIcon} aria-hidden="true">{icon}</div>
+    <div style={S.emptyTitle}>{title}</div>
+    {hint ? <div style={S.emptyHint}>{hint}</div> : null}
   </div>
 );
 
-const EmptySlot = ({ text }) => (
-  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 190, borderRadius: 8, border: "1px dashed #E5E7EB", background: "#F9FAFB", color: "#9CA3AF", fontSize: 13, fontWeight: 600 }}>
-    {text}
-  </div>
-);
-
-/** One image slot — preview when present, placeholder when not. */
-const ImageSlot = ({ label, file, emptyText }) => (
-  <div style={{ flex: "1 1 260px", minWidth: 240 }}>
-    <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>{label}</div>
+/**
+ * One document slot: a large preview when the file exists, a centred empty
+ * state when it does not. FilePreview is unchanged — it still fetches with the
+ * admin token and opens the file on click.
+ */
+const ImageSlot = ({ label, file, emptyIcon, emptyTitle, emptyHint, note }) => (
+  <figure style={S.slot}>
+    <figcaption style={S.slotLabel}>{label}</figcaption>
     {file?.path ? (
-      <FilePreview
-        src={file.path}
-        alt={label}
-        style={{ width: "100%", height: 190, objectFit: "cover", borderRadius: 8, border: "1px solid #E5E7EB" }}
-      />
+      <FilePreview src={file.path} alt={label} style={S.preview} />
     ) : (
-      <EmptySlot text={emptyText} />
+      <EmptyState icon={emptyIcon} title={emptyTitle} hint={emptyHint} />
     )}
-  </div>
+    {note ? <div style={S.slotNote}>{note}</div> : null}
+  </figure>
 );
 
 export default function VehicleDetailsPage() {
   const { applicationId } = useParams();
   const navigate = useNavigate();
-  const { logout } = useAuth();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -253,27 +263,28 @@ export default function VehicleDetailsPage() {
 
   /* ─── Render ───────────────────────────────────────────────────────────── */
   return (
-    <div style={{ background: "#F8FAFC", minHeight: "100vh", padding: "22px 0" }}>
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 18px" }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+    <div style={S.page}>
+      <SuperAdminNav active="rcNumberPlate" />
+
+      <div style={S.shell}>
+        {/* Header — title and subtitle on the left, actions on the right.
+            The account menu and logout live in the shared navigation above. */}
+        <div style={S.header}>
           <div>
-            <h2 style={{ color: BRAND.blue, fontWeight: 800, margin: 0 }}>Vehicle Details</h2>
-            <p style={{ color: "#6B7280", margin: "4px 0 0" }}>
-              Review and manage RC, Number Plate and SPDC information
-            </p>
+            <h2 style={S.title}>Vehicle Details</h2>
+            <p style={S.subtitle}>Review and manage RC, Number Plate and SPDC information</p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-outline-secondary" onClick={() => navigate("/superadmin/rc-number-plate")}>
-              ← Back to list
+
+          <div style={S.actions}>
+            <button
+              className="btn btn-outline-secondary"
+              onClick={() => navigate("/superadmin/rc-number-plate")}
+            >
+              ← Back to List
             </button>
 
             {!loading && !error && data && !editing && (
-              <button
-                className="btn btn-sm"
-                style={{ background: BRAND.blue, color: "#fff", fontWeight: 700, padding: "6px 18px" }}
-                onClick={() => setEditing(true)}
-              >
+              <button className="btn btn-primary" onClick={() => setEditing(true)}>
                 Edit
               </button>
             )}
@@ -284,8 +295,7 @@ export default function VehicleDetailsPage() {
                   Cancel
                 </button>
                 <button
-                  className="btn btn-sm"
-                  style={{ background: BRAND.blue, color: "#fff", fontWeight: 700, padding: "6px 18px", opacity: saving ? 0.7 : 1 }}
+                  className="btn btn-primary"
                   onClick={handleSave}
                   disabled={saving || uploading}
                 >
@@ -293,10 +303,6 @@ export default function VehicleDetailsPage() {
                 </button>
               </>
             )}
-
-            <button className="btn btn-outline-danger" onClick={() => { logout(); navigate("/"); }}>
-              Logout
-            </button>
           </div>
         </div>
 
@@ -313,14 +319,14 @@ export default function VehicleDetailsPage() {
           <>
             {/* Customer information — always read-only */}
             <Card title="Customer Information">
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
-                <ReadOnlyField label="Loan No." value={data.loanNumber} />
-                <ReadOnlyField label="Branch" value={data.branch} />
-                <ReadOnlyField label="Customer Name" value={data.customerName} />
-                <ReadOnlyField label="Contact" value={data.contact} />
-                <ReadOnlyField label="Amount" value={fmtAmount(data.amount)} />
-                <ReadOnlyField label="Dealer Name" value={data.dealerName} />
-                <ReadOnlyField label="Disb. Date" value={fmtDate(data.disbursementDate)} />
+              <div style={S.tileGrid}>
+                <InfoTile icon="🔖" label="Loan Number" value={data.loanNumber} />
+                <InfoTile icon="🏢" label="Branch" value={data.branch} />
+                <InfoTile icon="👤" label="Customer Name" value={data.customerName} />
+                <InfoTile icon="🏬" label="Dealer Name" value={data.dealerName} />
+                <InfoTile icon="📞" label="Contact Number" value={data.contact} />
+                <InfoTile icon="📅" label="Disbursement Date" value={fmtDate(data.disbursementDate)} />
+                <InfoTile icon="₹" label="Loan Amount" value={fmtAmount(data.amount)} />
               </div>
             </Card>
 
@@ -361,22 +367,36 @@ export default function VehicleDetailsPage() {
                 </div>
               )}
               {data.rc?.frontImage?.path || data.rc?.backImage?.path ? (
-                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                  <ImageSlot label="RC Front" file={data.rc.frontImage} emptyText="No RC Front" />
-                  <ImageSlot label="RC Back" file={data.rc.backImage} emptyText="No RC Back" />
+                <div style={S.slotRow}>
+                  <ImageSlot
+                    label="RC Front"
+                    file={data.rc?.frontImage}
+                    emptyIcon="📄"
+                    emptyTitle="No RC Front Uploaded"
+                    emptyHint="Upload an RC document to continue."
+                  />
+                  <ImageSlot
+                    label="RC Back"
+                    file={data.rc?.backImage}
+                    emptyIcon="📄"
+                    emptyTitle="No RC Back Uploaded"
+                    emptyHint="Upload an RC document to continue."
+                  />
                 </div>
               ) : (
-                <EmptySlot text="No RC Uploaded" />
+                <EmptyState
+                  icon="📄"
+                  title="No RC Uploaded"
+                  hint="Upload an RC document to continue."
+                />
               )}
             </Card>
 
             {/* Number Plate */}
             <Card title="Number Plate" right={<StatusBadge status={data.numberPlate?.status} />}>
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
-                <div style={{ flex: "1 1 300px" }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 6 }}>
-                    Number Plate
-                  </label>
+              <div style={S.slotRow}>
+                <div style={S.field}>
+                  <label style={S.fieldLabel}>Number Plate</label>
                   <input
                     className="form-control"
                     style={inputStyle(!!fieldErrors.numberPlate)}
@@ -387,27 +407,25 @@ export default function VehicleDetailsPage() {
                     onChange={(e) => setField("numberPlate", e.target.value.toUpperCase())}
                   />
                   {fieldErrors.numberPlate && (
-                    <div style={{ color: BRAND.red, fontSize: 12.5, fontWeight: 700, marginTop: 4 }}>
-                      {fieldErrors.numberPlate}
-                    </div>
+                    <div style={S.fieldError}>{fieldErrors.numberPlate}</div>
                   )}
                 </div>
 
                 <ImageSlot
                   label="Number Plate Image"
                   file={data.numberPlate?.image}
-                  emptyText="No Number Plate Uploaded"
+                  emptyIcon="🚗"
+                  emptyTitle="No Number Plate Uploaded"
+                  emptyHint="Upload a number plate photograph to continue."
                 />
               </div>
             </Card>
 
             {/* SPDC */}
             <Card title="SPDC">
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
-                <div style={{ flex: "1 1 300px" }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 6 }}>
-                    SPDC Number
-                  </label>
+              <div style={S.slotRow}>
+                <div style={S.field}>
+                  <label style={S.fieldLabel}>SPDC Number</label>
                   <input
                     className="form-control"
                     style={inputStyle(false)}
@@ -419,10 +437,8 @@ export default function VehicleDetailsPage() {
                   />
 
                   {editing && (
-                    <div style={{ marginTop: 14 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 6 }}>
-                        SPDC Image
-                      </label>
+                    <div style={{ marginTop: 20 }}>
+                      <label style={S.fieldLabel}>SPDC Image</label>
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -432,7 +448,7 @@ export default function VehicleDetailsPage() {
                         disabled={uploading || saving}
                         onChange={handleSpdcFile}
                       />
-                      <div style={{ fontSize: 11.5, color: "#94A3B8", marginTop: 4, maxWidth: 320 }}>
+                      <div style={{ ...S.fieldHint, maxWidth: 320 }}>
                         {uploading
                           ? "Uploading…"
                           : data.spdc?.image?.path
@@ -440,21 +456,23 @@ export default function VehicleDetailsPage() {
                             : "JPG, PNG or WebP, up to 15MB."}
                       </div>
                       {fieldErrors.spdcImage && (
-                        <div style={{ color: BRAND.red, fontSize: 12.5, fontWeight: 700, marginTop: 4 }}>
-                          {fieldErrors.spdcImage}
-                        </div>
+                        <div style={S.fieldError}>{fieldErrors.spdcImage}</div>
                       )}
                     </div>
                   )}
                 </div>
 
                 <ImageSlot
-                  label={spdcPreview?.pending ? "SPDC Image (not saved yet)" : "SPDC Image"}
+                  label="SPDC Image"
                   file={spdcPreview}
-                  emptyText="No SPDC Image"
+                  emptyIcon="🧾"
+                  emptyTitle="No SPDC Image"
+                  emptyHint="Add an SPDC image while editing."
+                  note={spdcPreview?.pending ? "Staged — press Save Changes to apply it." : null}
                 />
               </div>
             </Card>
+
           </>
         )}
       </div>
@@ -463,3 +481,74 @@ export default function VehicleDetailsPage() {
     </div>
   );
 }
+
+/* ─── One set of tokens: equal radius, equal padding, equal spacing ──────── */
+const RADIUS = 14;
+const S = {
+  page: { minHeight: "100vh", background: "#F8FAFC", padding: 24, boxSizing: "border-box" },
+  shell: { maxWidth: 1180, margin: "0 auto" },
+
+  header: {
+    display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+    gap: 20, flexWrap: "wrap", marginBottom: 24,
+  },
+  title: { color: BRAND.blue, fontWeight: 800, margin: 0, fontSize: 26, letterSpacing: "-0.01em" },
+  subtitle: { color: "#6B7280", margin: "6px 0 0", fontSize: 14, lineHeight: 1.5 },
+  actions: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
+
+  card: {
+    background: "#fff", border: "1px solid #E5E7EB", borderRadius: RADIUS,
+    marginBottom: 22, overflow: "hidden", boxShadow: "0 2px 12px rgba(11,31,77,0.06)",
+  },
+  cardHead: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 16, padding: "16px 24px", background: "#FAFBFC", borderBottom: "1px solid #F1F5F9",
+    flexWrap: "wrap",
+  },
+  cardTitle: {
+    margin: 0, fontSize: 13, fontWeight: 800, color: "#374151",
+    textTransform: "uppercase", letterSpacing: "0.6px",
+  },
+  cardSubtitle: { margin: "3px 0 0", fontSize: 12.5, color: "#94A3B8" },
+  cardBody: { padding: 24 },
+
+  // Responsive on its own: tiles reflow from four across to one as width drops.
+  tileGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 16 },
+  tile: {
+    display: "flex", alignItems: "flex-start", gap: 12,
+    padding: "14px 16px", borderRadius: 12, background: "#F8FAFC", border: "1px solid #EEF2F7",
+  },
+  tileIcon: { fontSize: 18, lineHeight: 1.2, flexShrink: 0 },
+  tileLabel: {
+    fontSize: 11, fontWeight: 700, color: "#94A3B8",
+    textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 3,
+  },
+  tileValue: {
+    fontSize: 15, color: "#0f172a", fontWeight: 700,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+
+  slotRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 24 },
+  slot: { margin: 0, minWidth: 0 },
+  slotLabel: { fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 10 },
+  // Much larger than before (was 190px tall).
+  preview: {
+    width: "100%", height: 320, objectFit: "cover",
+    borderRadius: 12, border: "1px solid #E5E7EB", background: "#F8FAFC",
+  },
+  slotNote: { fontSize: 11.5, color: "#94A3B8", marginTop: 8 },
+
+  empty: {
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    height: 320, borderRadius: 12, border: "1px dashed #CBD5E1", background: "#F9FAFB",
+    padding: 24, textAlign: "center", boxSizing: "border-box",
+  },
+  emptyIcon: { fontSize: 40, lineHeight: 1, marginBottom: 12 },
+  emptyTitle: { fontSize: 15, fontWeight: 700, color: "#475569" },
+  emptyHint: { fontSize: 13, color: "#94A3B8", marginTop: 6, maxWidth: 260, lineHeight: 1.5 },
+
+  field: { minWidth: 0 },
+  fieldLabel: { fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 8 },
+  fieldError: { color: BRAND.red, fontSize: 12.5, fontWeight: 700, marginTop: 6 },
+  fieldHint: { fontSize: 11.5, color: "#94A3B8", marginTop: 6 },
+};
