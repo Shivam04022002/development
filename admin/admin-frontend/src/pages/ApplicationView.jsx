@@ -420,6 +420,27 @@ export default function ApplicationView() {
     a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
   const applicantName = fullName(applicantData) || "Applicant";
 
+  /**
+   * Whose bureau report is stored?
+   *
+   * There is ONE report per application, pulled against one person's PAN.
+   * `cibil.subjectPan` records whose it is; records that predate the swap
+   * feature carry no subject, which meant "the applicant" at the time. This is
+   * the same rule ApplicantSwapCards uses, so the cards and these sections can
+   * never disagree about who owns the score.
+   */
+  const cibilPanOf = (party) => {
+    const p = party?.applicant || party || {};
+    return String(p.panNo || p.pan || "").trim().toUpperCase();
+  };
+  const cibilSubjectPan = String(app?.cibil?.subjectPan || "").trim().toUpperCase();
+  const cibilHasReport =
+    typeof app?.cibil?.score === "number" || Boolean(app?.cibil?.requestId);
+  const cibilBelongsTo = (party, isApplicant) => {
+    if (!cibilHasReport) return false;
+    return cibilSubjectPan ? cibilPanOf(party) === cibilSubjectPan : isApplicant;
+  };
+
   // Approval is gated only by checklist items the backend already enforces
   // (see utils/approvalChecklist.js — `blocking`). Reject is never gated.
   const approvalBlocked = Boolean(app?.checklist?.approval?.blocked);
@@ -671,6 +692,18 @@ export default function ApplicationView() {
             </div>
           </div>
 
+          {/* ──── Applicant CIBIL ──── */}
+          <CibilBlock
+            title="Applicant CIBIL"
+            cibil={app?.cibil}
+            available={cibilBelongsTo(app?.applicant, true)}
+            busy={cibilBusy}
+            onViewJson={handleViewJson}
+            onDownloadJson={handleDownloadJson}
+            onViewPdf={handleViewPdf}
+            onDownloadPdf={handleDownloadPdf}
+          />
+
           {/* ──── Co-Applicant Section ──── */}
           <div ref={coApplicantRef} style={S.section}>
             <h2 style={S.sectionHeading}>Co-Applicant</h2>
@@ -751,6 +784,18 @@ export default function ApplicationView() {
             </div>
           </div>
 
+          {/* ──── Co-Applicant CIBIL ──── */}
+          <CibilBlock
+            title="Co-Applicant CIBIL"
+            cibil={app?.cibil}
+            available={cibilBelongsTo(app?.coApplicant, false)}
+            busy={cibilBusy}
+            onViewJson={handleViewJson}
+            onDownloadJson={handleDownloadJson}
+            onViewPdf={handleViewPdf}
+            onDownloadPdf={handleDownloadPdf}
+          />
+
           {/* ──── Vehicle Details ──── */}
           <div ref={vehicleRef} style={S.section}>
             <h2 style={S.sectionHeading}>Vehicle Details</h2>
@@ -814,74 +859,6 @@ export default function ApplicationView() {
 
             <div style={S.fieldLabel}><b>Current Status</b></div>
             <span style={{ fontWeight: 600 }}>{app?.status || "—"}</span>
-          </div>
-
-          {/* ──── CIBIL (summary only — internal report is never exposed) ──── */}
-          <div style={S.section}>
-            <h2 style={S.sectionHeading}>CIBIL</h2>
-            <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
-
-            {(() => {
-              const c = app?.cibil || {};
-              const hasScore = typeof c.score === "number" && !Number.isNaN(c.score);
-              const clamped = hasScore ? Math.max(300, Math.min(900, c.score)) : 0;
-              const pct = hasScore ? ((clamped - 300) / 600) * 100 : 0;
-              const meterColor = !hasScore
-                ? "#CBD5E1"
-                : c.score >= 750
-                ? "#16A34A"
-                : c.score >= 650
-                ? "#F59E0B"
-                : "#EF4444";
-              const fmtDate = (d) => {
-                if (!d) return "—";
-                const dt = new Date(d);
-                return Number.isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString();
-              };
-              return (
-                <>
-                  {/* CIBIL Meter */}
-                  <div style={{ marginBottom: 18 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
-                      <span style={{ fontWeight: 700, color: meterColor, fontSize: 22 }}>
-                        {hasScore ? c.score : "—"}
-                      </span>
-                      <span style={{ color: "#6B7280", fontSize: 12 }}>300–900</span>
-                    </div>
-                    <div style={{ height: 12, borderRadius: 999, background: "#E5E7EB", overflow: "hidden" }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: meterColor, borderRadius: 999, transition: "width .3s" }} />
-                    </div>
-                  </div>
-
-                  <div style={S.twoCol}>
-                    <div style={S.colStack}>
-                      <FieldPair label="CIBIL Score" value={hasScore ? String(c.score) : "—"} />
-                      <FieldPair label="Status" value={c.status || c.state || "—"} />
-                    </div>
-                    <div style={S.colStack}>
-                      <FieldPair label="Report Date" value={fmtDate(c.reportDate)} />
-                      <FieldPair label="Request ID" value={c.requestId || "—"} />
-                    </div>
-                  </div>
-
-                  {/* Stored JSON is the source of truth; PDFs are generated on demand. */}
-                  <div style={S.cibilActions}>
-                    <button style={S.cibilBtn} disabled={!!cibilBusy} onClick={handleViewJson}>
-                      {cibilBusy === "viewJson" ? "Loading…" : "View JSON"}
-                    </button>
-                    <button style={S.cibilBtn} disabled={!!cibilBusy} onClick={handleDownloadJson}>
-                      {cibilBusy === "dlJson" ? "Preparing…" : "Download JSON"}
-                    </button>
-                    <button style={S.cibilBtnPrimary} disabled={!!cibilBusy} onClick={handleViewPdf}>
-                      {cibilBusy === "viewPdf" ? "Generating…" : "View PDF"}
-                    </button>
-                    <button style={S.cibilBtnPrimary} disabled={!!cibilBusy} onClick={handleDownloadPdf}>
-                      {cibilBusy === "dlPdf" ? "Generating…" : "Download PDF"}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
           </div>
 
           {/* ──── Credit Note ──── */}
@@ -1083,6 +1060,84 @@ function fmtDisbursementDate(v) {
   return Number.isNaN(d.getTime())
     ? "—"
     : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/* ═══════════ CIBIL block — one component, rendered per person ═══════════
+   Lifted verbatim from the single CIBIL section it replaces: same meter, same
+   field pairs, same buttons, same styles. The only difference between the two
+   instances is whose data it is handed. */
+function CibilBlock({ title, cibil, available, busy, onViewJson, onDownloadJson, onViewPdf, onDownloadPdf }) {
+  const c = available ? cibil || {} : {};
+  const hasScore = typeof c.score === "number" && !Number.isNaN(c.score);
+  const clamped = hasScore ? Math.max(300, Math.min(900, c.score)) : 0;
+  const pct = hasScore ? ((clamped - 300) / 600) * 100 : 0;
+  const meterColor = !hasScore
+    ? "#CBD5E1"
+    : c.score >= 750
+    ? "#16A34A"
+    : c.score >= 650
+    ? "#F59E0B"
+    : "#EF4444";
+  const fmtDate = (d) => {
+    if (!d) return "—";
+    const dt = new Date(d);
+    return Number.isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString();
+  };
+
+  return (
+    <div style={S.section}>
+      <h2 style={S.sectionHeading}>{title}</h2>
+      <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
+
+      {/* CIBIL Meter */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ fontWeight: 700, color: meterColor, fontSize: 22 }}>
+            {hasScore ? c.score : "—"}
+          </span>
+          <span style={{ color: "#6B7280", fontSize: 12 }}>300–900</span>
+        </div>
+        <div style={{ height: 12, borderRadius: 999, background: "#E5E7EB", overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: meterColor, borderRadius: 999, transition: "width .3s" }} />
+        </div>
+      </div>
+
+      {!available && (
+        <div style={{ color: "#6B7280", fontSize: 13, marginBottom: 14 }}>
+          No CIBIL Report Available
+        </div>
+      )}
+
+      <div style={S.twoCol}>
+        <div style={S.colStack}>
+          <FieldPair label="CIBIL Score" value={hasScore ? String(c.score) : "—"} />
+          <FieldPair label="Status" value={c.status || c.state || "—"} />
+        </div>
+        <div style={S.colStack}>
+          <FieldPair label="Report Date" value={fmtDate(c.reportDate)} />
+          <FieldPair label="Request ID" value={c.requestId || "—"} />
+        </div>
+      </div>
+
+      {/* Stored JSON is the source of truth; PDFs are generated on demand.
+          With no report for this person there is nothing to fetch, so the
+          actions are disabled rather than left to fail on a 404. */}
+      <div style={S.cibilActions}>
+        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={onViewJson}>
+          {busy === "viewJson" ? "Loading…" : "View JSON"}
+        </button>
+        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={onDownloadJson}>
+          {busy === "dlJson" ? "Preparing…" : "Download JSON"}
+        </button>
+        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={onViewPdf}>
+          {busy === "viewPdf" ? "Generating…" : "View PDF"}
+        </button>
+        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={onDownloadPdf}>
+          {busy === "dlPdf" ? "Generating…" : "Download PDF"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════ Reusable FieldPair Component ═══════════ */
