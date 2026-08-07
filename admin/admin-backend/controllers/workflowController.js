@@ -29,6 +29,7 @@ import { escapeRegex } from "../utils/escapeRegex.js";
 import { initVehicleDocs } from "../utils/vehicleDocs.js";
 import { loadCibilPolicy, buildEligibility } from "../utils/loanEligibility.js";
 import { buildApprovalChecklist } from "../utils/approvalChecklist.js";
+import { prepareDisbursement, describeDisbursement } from "../utils/disbursement.js";
 
 /**
  * Augment a lean application document with normalized, flat fields for list
@@ -449,6 +450,27 @@ export const updateWorkflowStage = async (req, res) => {
       });
     }
 
+    // ── Disbursement gate ───────────────────────────────────────────────────
+    // Runs BEFORE the document is touched: the history push and the stage
+    // assignment below both mutate `app`, so validating afterwards would leave
+    // a rejected request having already changed the in-memory record. Nothing
+    // is written unless this passes.
+    let disbursementBlock = null;
+    if (isFinalStage(next)) {
+      const prepared = await prepareDisbursement(req.body?.disbursement, {
+        applicationId: app._id,
+        admin: req.admin,
+      });
+      if (!prepared.ok) {
+        return res.status(prepared.status).json({
+          message: prepared.message,
+          code: prepared.code,
+          errors: prepared.errors,
+        });
+      }
+      disbursementBlock = prepared.disbursement;
+    }
+
     // push history and update
     app.history = app.history || [];
     app.history.push({
@@ -527,7 +549,13 @@ export const updateWorkflowStage = async (req, res) => {
         action: "APPROVE",
         fromStage: app.workflowStage || null,
         toStage: "disbursement",
-        notes: "Application approved and moved to Approved collection",
+        notes: `Workflow changed to Disbursed
+${describeDisbursement(disbursementBlock)}`,
+        meta: {
+          approvedAmount: disbursementBlock.approvedAmount,
+          loanNumber: disbursementBlock.loanNumber,
+          disbursementDate: disbursementBlock.disbursementDate,
+        },
         at: new Date()
       });
     } catch (logErr) {
@@ -542,7 +570,8 @@ export const updateWorkflowStage = async (req, res) => {
       actionType: "APPROVED",
       oldValue: app.workflowStage || null,
       newValue: "disbursement",
-      remarks: "Application approved and moved to disbursement",
+      remarks: `Workflow changed to Disbursed
+${describeDisbursement(disbursementBlock)}`,
       updatedBy: (req.admin && (req.admin.name || req.admin.email)) || "admin",
       updatedByEmail: req.admin?.email || "",
       updatedByRole: req.admin?.role || "admin",
@@ -574,6 +603,9 @@ export const updateWorkflowStage = async (req, res) => {
         ...initVehicleDocs(app),
         // Carry verification across so it is not lost when the record moves.
         documentVerification: app.documentVerification,
+        // The disbursement details this transition just captured. Written here
+        // rather than onto the source document, which is deleted below.
+        disbursement: disbursementBlock,
       });
       await approvedDoc.save({ timestamps: false });
     }
@@ -610,9 +642,27 @@ export const updateWorkflowStage = async (req, res) => {
      { success: false, id, formId?, code, message }
    Throws only on unexpected errors (caller maps to 500).
    ============================================================ */
-async function approveApplicationCore(id, admin, note) {
+async function approveApplicationCore(id, admin, note, disbursementInput) {
   const app = await Application.findById(id);
   if (!app) return { success: false, id, code: "not_found", message: "Application not found" };
+
+  // Approving moves the application to `disbursed`, so the same rule applies
+  // here as on the stage-change path: no details, no transition. Validated
+  // before any write, and returned as a structured failure so the bulk endpoint
+  // reports it per application rather than failing the whole batch.
+  const prepared = await prepareDisbursement(disbursementInput, { applicationId: app._id, admin });
+  if (!prepared.ok) {
+    return {
+      success: false,
+      id,
+      formId: app.formId,
+      code: prepared.code,
+      message: prepared.message,
+      errors: prepared.errors,
+      status: prepared.status,
+    };
+  }
+  const disbursementBlock = prepared.disbursement;
 
   await backfillDealerRef(app);
   if (!app.dealer) {
@@ -627,7 +677,14 @@ async function approveApplicationCore(id, admin, note) {
       action: "APPROVE",
       fromStage: app.workflowStage || null,
       toStage: "disbursement",
-      notes: note || "Application approved via admin UI",
+      notes: `Workflow changed to Disbursed
+${describeDisbursement(disbursementBlock)}`,
+      meta: {
+        approvedAmount: disbursementBlock.approvedAmount,
+        loanNumber: disbursementBlock.loanNumber,
+        disbursementDate: disbursementBlock.disbursementDate,
+        note: note || undefined,
+      },
       at: new Date()
     });
   } catch (logErr) {
@@ -642,7 +699,9 @@ async function approveApplicationCore(id, admin, note) {
     actionType: "APPROVED",
     oldValue: app.workflowStage || null,
     newValue: "disbursement",
-    remarks: note || "Application approved via admin UI",
+    remarks: `Workflow changed to Disbursed
+${describeDisbursement(disbursementBlock)}${note ? `
+${note}` : ""}`,
     updatedBy: (admin && (admin.name || admin.email)) || "admin",
     updatedByRole: admin?.role || "admin",
     updatedByAdminId: admin?._id || admin?.id || null,
@@ -684,6 +743,8 @@ async function approveApplicationCore(id, admin, note) {
       ...initVehicleDocs(app),
       // Carry verification across so it is not lost when the record moves.
       documentVerification: app.documentVerification,
+      // The disbursement details captured by this transition.
+      disbursement: disbursementBlock,
     });
     await approvedDoc.save({ timestamps: false });
   }
@@ -707,11 +768,20 @@ async function approveApplicationCore(id, admin, note) {
 // approve endpoint (POST /api/workflow/approve/:id) — thin wrapper over core
 export const approveApplication = async (req, res) => {
   try {
-    const r = await approveApplicationCore(req.params.id, req.admin, req.body?.note);
+    const r = await approveApplicationCore(
+      req.params.id,
+      req.admin,
+      req.body?.note,
+      req.body?.disbursement
+    );
     if (r.success) return res.json({ message: "Application approved and moved" });
     if (r.code === "not_found") return res.status(404).json({ error: r.message });
     if (r.code === "dealer_missing")
       return res.status(422).json({ error: r.message, details: "Cannot approve without dealer ObjectId" });
+    // Disbursement problems carry field-level errors for the modal.
+    if (r.errors) {
+      return res.status(r.status || 400).json({ message: r.message, error: r.message, code: r.code, errors: r.errors });
+    }
     return res.status(400).json({ error: r.message });
   } catch (err) {
     console.error("approveApplication error:", err);
@@ -824,7 +894,7 @@ export const bulkApproveApplications = async (req, res) => {
   const failed = [];
   for (const id of ids) {
     try {
-      const r = await approveApplicationCore(id, req.admin, req.body?.note);
+      const r = await approveApplicationCore(id, req.admin, req.body?.note, req.body?.disbursement);
       if (r.success) approved.push({ id, formId: r.formId });
       else failed.push({ id, formId: r.formId || null, reason: r.message });
     } catch (err) {

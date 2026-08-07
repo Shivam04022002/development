@@ -7,12 +7,10 @@ import FilePreview from "../components/FilePreview";
 import CreditNoteForm from "../components/CreditNoteForm";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import ActivityHistoryDrawer from "../components/ActivityHistoryDrawer";
-import Timeline from "../components/Timeline";
 import CreditNoteSummary from "../components/CreditNoteSummary";
 import ApplicantSwapCards from "../components/ApplicantSwapCards";
-import AssignmentPanel from "../components/AssignmentPanel";
-import LoanApprovalChecklist from "../components/LoanApprovalChecklist";
-import DocumentVerification from "../components/DocumentVerification";
+import DisbursementModal from "../components/DisbursementModal";
+import Toast from "../components/Toast";
 import { usePendingInvalidate } from "../hooks/useApplications";
 import {
   WORKFLOW_STAGES,
@@ -51,11 +49,34 @@ export default function ApplicationView() {
   const [stageChanging, setStageChanging] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditNote, setShowCreditNote] = useState(false);
-  // Bumped after a successful Credit Note so the Timeline and Credit Note
-  // summary remount and re-fetch through their own existing endpoints.
+  // Bumped after a successful Credit Note so the Credit Note summary
+  // remounts and re-fetches through its own existing endpoint.
   const [refreshKey, setRefreshKey] = useState(0);
+  // Disbursement: the stage change is deferred until the details are saved.
+  // `pending` records which action asked for it, so Confirm resumes that action.
+  const [disbursing, setDisbursing] = useState(null);
+  const [toast, setToast] = useState(null);
   const [cibilJson, setCibilJson] = useState(null);
   const [cibilBusy, setCibilBusy] = useState("");
+
+  /**
+   * Return the admin to the Pending list they came from.
+   *
+   * Approval used to push the user onto a dashboard, which drops them out of
+   * their workflow — for a Super Admin onto the default "Admins" tab, because
+   * SuperAdminDashboard never reads the `state` that was passed to it. Going
+   * back one history entry lands on the exact list route the application was
+   * opened from, so search, dealer filter and page are whatever the browser
+   * restores rather than a different module.
+   *
+   * `invalidatePending()` is the list's existing refresh: the approved row is
+   * gone on the refetch, with no manual browser reload.
+   */
+  const returnToPendingList = () => {
+    invalidatePending();
+    if (window.history.length > 1) navigate(-1);
+    else navigate("/pending");   // deep link with no history to go back to
+  };
 
   // Re-fetch the application through the existing workflow endpoint so the
   // workflow indicator reflects the stage the backend set, with no page reload.
@@ -144,15 +165,19 @@ export default function ApplicationView() {
       const nextStage = getNextStage(currentStage);
       const currentIsFinal = isFinalStage(currentStage);
 
-      if (currentIsFinal) {
-        try {
-          await api.post(`/workflow/approve/${app._id}`, { note: "Approved via UI" });
-        } catch (approveErr) {
-          const msg = approveErr?.response?.data?.message || approveErr?.message || "Approve failed";
-          alert("Approve failed: " + msg);
-          return;
-        }
-      } else {
+      // Reaching Disbursed requires the disbursement details first. Open the
+      // modal instead of moving; the stage advances only once it saves.
+      if (currentIsFinal || isFinalStage(nextStage)) {
+        setDisbursing(
+          currentIsFinal
+            ? { mode: "approve" }
+            : { mode: "stage", targetStage: nextStage, expectedCurrentStage: currentStage }
+        );
+        return;
+      }
+
+      // Only non-final moves reach here; Disbursed returned above.
+      {
         try {
           await api.patch(`/workflow/update/${app._id}`, {
             nextWorkflowStage: nextStage,
@@ -186,17 +211,12 @@ export default function ApplicationView() {
       } catch (reFetchErr) {
         if (reFetchErr?.response?.status === 404) {
           alert("Application approved and moved to Approved collection.");
-          navigate("/approved");
+          returnToPendingList();
           return;
         }
       }
 
-      if (!currentIsFinal) {
-        alert(`Moved to stage: ${nextStage}`);
-      } else {
-        invalidatePending();
-        navigate("/approved");
-      }
+      alert(`Moved to stage: ${nextStage}`);
     } finally {
       pendingUpdatesRef.current.delete(app._id);
       setUpdating(false);
@@ -210,6 +230,18 @@ export default function ApplicationView() {
     try {
       const currentStage = toStage(app.workflowStage || "");
       if (toStage(targetStage) === currentStage) {
+        setStageChanging(false);
+        return;
+      }
+
+      // Disbursed is captured through the modal; nothing is sent until the
+      // details are entered and saved.
+      if (isFinalStage(toStage(targetStage))) {
+        setDisbursing({
+          mode: "stage",
+          targetStage: toStage(targetStage),
+          expectedCurrentStage: currentStage,
+        });
         setStageChanging(false);
         return;
       }
@@ -250,7 +282,7 @@ export default function ApplicationView() {
       } catch (reFetchErr) {
         if (reFetchErr?.response?.status === 404) {
           alert("Application approved and moved to Approved collection.");
-          navigate("/approved");
+          returnToPendingList();
           return;
         }
       }
@@ -260,27 +292,66 @@ export default function ApplicationView() {
     }
   };
 
-  // Approve button handler
+  /**
+   * Confirm Disbursement. Saves the details and performs the transition in ONE
+   * backend call, so the stage cannot advance without the details having been
+   * stored. Errors are re-thrown for the modal, which stays open and shows them.
+   */
+  const confirmDisbursement = async (disbursement) => {
+    const request = disbursing;
+    if (!request) return;
+
+    if (request.mode === "approve") {
+      await runApprove(disbursement);          // navigates away on success
+      setDisbursing(null);
+      return;
+    }
+
+    await api.patch(`/workflow/update/${app._id}`, {
+      nextWorkflowStage: request.targetStage,
+      expectedCurrentStage: request.expectedCurrentStage,
+      disbursement,
+    });
+
+    setDisbursing(null);
+    setToast({ type: "success", msg: "Application marked Disbursed." });
+    invalidatePending();
+
+    // The record moves to the approved collection at this stage, so the detail
+    // read 404s — that is the expected outcome, not an error.
+    try {
+      const { data: refreshed } = await api.get(`/workflow/${app._id}`);
+      setApp(refreshed);
+      setRefreshKey((k) => k + 1);
+    } catch (reErr) {
+      if (reErr?.response?.status === 404) {
+        returnToPendingList();
+        return;
+      }
+      throw reErr;
+    }
+  };
+
+  // Approve button handler. Approving moves the application to Disbursed, so
+  // it goes through the same modal as every other route to that stage.
   const handleApprove = async () => {
     if (!app?._id) return;
     if (pendingUpdatesRef.current.has(app._id)) return;
+    setDisbursing({ mode: "approve" });
+  };
+
+  // The original approve call, now reached only from confirmDisbursement.
+  const runApprove = async (disbursement) => {
     pendingUpdatesRef.current.add(app._id);
     setApproving(true);
     try {
       const res = await api.post(`/workflow/approve/${app._id}`, {
         note: "Approved via admin UI",
         approvedByName: "Admin",
+        disbursement,
       });
-      alert(res.data?.message || "Application approved successfully");
-      invalidatePending();
-      if (admin?.role === "superadmin") {
-        navigate("/superadmin-dashboard", { state: { focus: "files", filesTab: "pending" } });
-      } else {
-        navigate("/dashboard", { state: { focus: "pending" } });
-      }
-    } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || "Approve failed";
-      alert("Approve failed: " + msg);
+      setToast({ type: "success", msg: res.data?.message || "Application marked Disbursed." });
+      returnToPendingList();
     } finally {
       pendingUpdatesRef.current.delete(app._id);
       setApproving(false);
@@ -348,24 +419,6 @@ export default function ApplicationView() {
   const fullName = (a) =>
     a?.name || `${a?.firstName || ""} ${a?.surname || ""}`.trim() || "";
   const applicantName = fullName(applicantData) || "Applicant";
-
-  // Verification badge for one document. Closes over the application and the
-  // page's existing refresh, so each call site stays a single line and the
-  // surrounding layout is unchanged.
-  const DocVerify = ({ role, field, label }) => {
-    const party = role === "applicant" ? applicantData : app?.coApplicant;
-    return (
-      <DocumentVerification
-        applicationId={app?._id}
-        role={role}
-        field={field}
-        label={label}
-        hasFile={Boolean(party?.[field])}
-        state={app?.documentVerification?.[role]?.[field]}
-        onChanged={refreshApplication}
-      />
-    );
-  };
 
   // Approval is gated only by checklist items the backend already enforces
   // (see utils/approvalChecklist.js — `blocking`). Reject is never gated.
@@ -548,13 +601,6 @@ export default function ApplicationView() {
         {/* ═══════════ RIGHT / CONTENT COLUMN ═══════════ */}
         <div style={S.content}>
 
-          {/* ──── Task ownership (assignment never changes the workflow) ──── */}
-          <AssignmentPanel
-            applicationId={app?._id}
-            assignment={app?.assignment}
-            onChanged={refreshApplication}
-          />
-
           {/* ──── Applicant / Co-Applicant summary + role swap ──── */}
           <ApplicantSwapCards app={app} onSwapped={refreshApplication} />
 
@@ -570,10 +616,7 @@ export default function ApplicationView() {
                   <div style={S.fieldLabel}><b>Profile</b></div>
                   <div style={S.imgThumbBox}>
                     {applicantData?.photo ? (
-                      <>
-                        <FilePreview src={applicantData.photo} alt="Applicant" style={S.imgThumb} />
-                        <DocVerify role="applicant" field="photo" label="Photograph" />
-                      </>
+                      <FilePreview src={applicantData.photo} alt="Applicant" style={S.imgThumb} />
                     ) : (
                       <span style={S.noImgText}>No Image</span>
                     )}
@@ -588,10 +631,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Front</b></div>
                   {applicantData?.aadharFront ? (
-                    <>
-                      <FilePreview src={applicantData.aadharFront} alt="Aadhaar Front" style={S.docImg} />
-                      <DocVerify role="applicant" field="aadharFront" label="Aadhaar Front" />
-                    </>
+                    <FilePreview src={applicantData.aadharFront} alt="Aadhaar Front" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -600,10 +640,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>PAN Image</b></div>
                   {applicantData?.panImage ? (
-                    <>
-                      <FilePreview src={applicantData.panImage} alt="PAN" style={S.docImg} />
-                      <DocVerify role="applicant" field="panImage" label="PAN Card" />
-                    </>
+                    <FilePreview src={applicantData.panImage} alt="PAN" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -622,10 +659,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Back</b></div>
                   {applicantData?.aadharBack ? (
-                    <>
-                      <FilePreview src={applicantData.aadharBack} alt="Aadhaar Back" style={S.docImg} />
-                      <DocVerify role="applicant" field="aadharBack" label="Aadhaar Back" />
-                    </>
+                    <FilePreview src={applicantData.aadharBack} alt="Aadhaar Back" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -649,10 +683,7 @@ export default function ApplicationView() {
                   <div style={S.fieldLabel}><b>Profile</b></div>
                   <div style={S.imgThumbBox}>
                     {app?.coApplicant?.photo ? (
-                      <>
-                        <FilePreview src={app.coApplicant.photo} alt="Co-Applicant" style={S.imgThumb} />
-                        <DocVerify role="coApplicant" field="photo" label="Photograph" />
-                      </>
+                      <FilePreview src={app.coApplicant.photo} alt="Co-Applicant" style={S.imgThumb} />
                     ) : (
                       <span style={S.noImgText}>No Image</span>
                     )}
@@ -667,10 +698,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Front</b></div>
                   {app?.coApplicant?.aadharFront ? (
-                    <>
-                      <FilePreview src={app.coApplicant.aadharFront} alt="Aadhaar Front" style={S.docImg} />
-                      <DocVerify role="coApplicant" field="aadharFront" label="Aadhaar Front" />
-                    </>
+                    <FilePreview src={app.coApplicant.aadharFront} alt="Aadhaar Front" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -679,10 +707,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Aadhaar Back</b></div>
                   {app?.coApplicant?.aadharBack ? (
-                    <>
-                      <FilePreview src={app.coApplicant.aadharBack} alt="Aadhaar Back" style={S.docImg} />
-                      <DocVerify role="coApplicant" field="aadharBack" label="Aadhaar Back" />
-                    </>
+                    <FilePreview src={app.coApplicant.aadharBack} alt="Aadhaar Back" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -691,10 +716,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>PAN Image</b></div>
                   {app?.coApplicant?.panImage ? (
-                    <>
-                      <FilePreview src={app.coApplicant.panImage} alt="PAN" style={S.docImg} />
-                      <DocVerify role="coApplicant" field="panImage" label="PAN Card" />
-                    </>
+                    <FilePreview src={app.coApplicant.panImage} alt="PAN" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -703,10 +725,7 @@ export default function ApplicationView() {
                 <div>
                   <div style={S.fieldLabel}><b>Form 60</b></div>
                   {app?.coApplicant?.form60 ? (
-                    <>
-                      <FilePreview src={app.coApplicant.form60} alt="Form 60" style={S.docImg} />
-                      <DocVerify role="coApplicant" field="form60" label="Form 60" />
-                    </>
+                    <FilePreview src={app.coApplicant.form60} alt="Form 60" style={S.docImg} />
                   ) : (
                     <span style={S.noImgText}>No Image</span>
                   )}
@@ -872,12 +891,28 @@ export default function ApplicationView() {
             <CreditNoteSummary key={refreshKey} applicationId={app?._id} />
           </div>
 
-          {/* ──── Timeline ──── */}
-          <div style={S.section}>
-            <h2 style={S.sectionHeading}>Timeline</h2>
-            <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
-            <Timeline key={refreshKey} applicationId={app?._id} />
-          </div>
+          {/* ──── Disbursement Details ────
+               Appears once the application has been disbursed. Read-only: the
+               values were captured at the transition and are never edited here. */}
+          {app?.disbursement ? (
+            <div data-id="Disbursement Details" style={S.section}>
+              <h2 style={S.sectionHeading}>Disbursement Details</h2>
+              <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
+              <div style={S.twoCol}>
+                <div style={S.colStack}>
+                  <FieldPair label="Approved Amount" value={fmtAmount(app.disbursement.approvedAmount)} />
+                  <FieldPair label="Loan Number" value={app.disbursement.loanNumber || "—"} />
+                </div>
+                <div style={S.colStack}>
+                  <FieldPair label="Disbursement Date" value={fmtDisbursementDate(app.disbursement.disbursementDate)} />
+                  <FieldPair
+                    label="Recorded By"
+                    value={app.disbursement.disbursedByName || "—"}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* ──── Workflow ──── */}
           <div ref={workflowRef} style={{ ...S.section, borderBottom: "none" }}>
@@ -903,12 +938,6 @@ export default function ApplicationView() {
               </select>
             </div>
           </div>
-
-          {/* ──── Approval readiness ────
-               Rendered as the last block of the content column, directly above
-               the action bar. The bar itself is position:fixed, so placing the
-               checklist inside it would turn it into an overlay. */}
-          <LoanApprovalChecklist checklist={app?.checklist} />
 
           {/* ──── Floating Buttons ──── */}
           <div style={S.floatingBtns}>
@@ -1026,8 +1055,34 @@ export default function ApplicationView() {
           onClose={() => setShowHistory(false)}
         />
       )}
+
+      {/* Cancel leaves the application exactly where it was. */}
+      <DisbursementModal
+        open={Boolean(disbursing)}
+        formId={app?.formId}
+        onCancel={() => setDisbursing(null)}
+        onConfirm={confirmDisbursement}
+      />
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </DashboardLayout>
   );
+}
+
+/** Rupees, in the Indian grouping used by the audit entry: 450000 → ₹4,50,000. */
+function fmtAmount(n) {
+  return typeof n === "number" && Number.isFinite(n)
+    ? `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+    : "—";
+}
+
+/** The application's standard date format: 05 Aug 2026. */
+function fmtDisbursementDate(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 /* ═══════════ Reusable FieldPair Component ═══════════ */

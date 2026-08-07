@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
 import { documentVerification } from "./documentVerificationSchemas.js";
 import { assignment } from "./assignmentSchemas.js";
+import { disbursement } from "./disbursementSchemas.js";
 
 const approvedApplicationSchema = new mongoose.Schema(
   {
@@ -45,6 +46,10 @@ const approvedApplicationSchema = new mongoose.Schema(
     // Who is responsible for the next action. Absent = unassigned. Never
     // affects workflowStage.
     assignment,
+
+    // ── Disbursement ─────────────────────────────────────────────────────────
+    // Carried across from the application at approval; read-only thereafter.
+    disbursement,
   },
   { timestamps: true }
 );
@@ -59,6 +64,7 @@ approvedApplicationSchema.index({ "dealerDetails.name": 1 });
 // Phase 3.1: the My Tasks queue reads both collections, so an approved
 // application that is still owned by someone is found by the same index.
 approvedApplicationSchema.index({ "assignment.assignedTo": 1 }, { sparse: true });
+approvedApplicationSchema.index({ "disbursement.loanNumber": 1 }, { sparse: true });
 
 // RC & Number Plate module. The dealer's pending lists and vehicle counts are
 // always scoped to one dealer, so the compound indexes lead with `dealer`; the

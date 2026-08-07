@@ -5,7 +5,6 @@ import api from "../services/api";
 import FilePreview from "../components/FilePreview";
 import DashboardLayout from "../components/layout/DashboardLayout";
 import { stageLabel } from "../utils/workflowConfig";
-import AssignmentPanel from "../components/AssignmentPanel";
 
 
 export default function ApprovedApplicationView() {
@@ -42,17 +41,6 @@ export default function ApprovedApplicationView() {
   }, [id]);
 
   const goBack = () => navigate(-1);
-
-  // Re-read through the same endpoint the initial load uses, so an assignment
-  // change is reflected without a page reload.
-  const refreshApplication = async () => {
-    try {
-      const { data } = await api.get(`/workflow/applications/approved/${id}`);
-      setApp(data);
-    } catch (err) {
-      console.error("Refresh failed:", err?.response?.data || err.message);
-    }
-  };
 
 
   if (loading) {
@@ -126,13 +114,6 @@ export default function ApprovedApplicationView() {
 
       {/* RIGHT: content cards */}
       <main style={styles.content}>
-        {/* Task ownership — approved work can still be closed out */}
-        <AssignmentPanel
-          applicationId={app?._id}
-          assignment={app?.assignment}
-          onChanged={refreshApplication}
-        />
-
         <Section title="Applicant" refProp={applicantRef}>
             <Grid three style={{ marginTop: 10, marginBottom: 20 }}>
             <ImageField label="Photo" src={applicant?.photo} />
@@ -203,6 +184,17 @@ export default function ApprovedApplicationView() {
           </Grid>
         </Section>
 
+        {app?.disbursement ? (
+          <Section title="Disbursement Details">
+            <Grid two>
+              <Field label="Approved Amount" value={fmtAmount(app.disbursement.approvedAmount)} />
+              <Field label="Loan Number" value={app.disbursement.loanNumber} />
+              <Field label="Disbursement Date" value={fmtDisbursementDate(app.disbursement.disbursementDate)} />
+              <Field label="Recorded By" value={app.disbursement.disbursedByName} />
+            </Grid>
+          </Section>
+        ) : null}
+
         <Section title="Status" refProp={statusRef}>
           <div style={styles.statusLine}>
             <span style={styles.statusDot} />
@@ -225,6 +217,22 @@ export default function ApprovedApplicationView() {
 }
 
 /* ====================== Small UI Bits ====================== */
+
+/** Rupees in Indian grouping: 450000 → ₹4,50,000. */
+function fmtAmount(n) {
+  return typeof n === "number" && Number.isFinite(n)
+    ? `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+    : "—";
+}
+
+/** The application's standard date format: 05 Aug 2026. */
+function fmtDisbursementDate(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
 
 function Section({ title, children, refProp }) {
   return (

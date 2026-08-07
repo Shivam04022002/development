@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.js";
 import { documentVerification } from "./documentVerificationSchemas.js";
 import { assignment } from "./assignmentSchemas.js";
+import { disbursement } from "./disbursementSchemas.js";
 
 /**
  * Application — the SINGLE source of truth for a loan application.
@@ -143,6 +144,11 @@ const applicationSchema = new mongoose.Schema(
     // Who is responsible for the next action. Absent = unassigned. Never
     // affects workflowStage.
     assignment,
+
+    // ── Disbursement ─────────────────────────────────────────────────────────
+    // Captured when the application is moved to `disbursed`. The stage cannot
+    // advance without it, so its presence and the stage stay consistent.
+    disbursement,
   },
   { timestamps: true }
 );
@@ -162,6 +168,7 @@ applicationSchema.index({ dealer: 1 });
 // the assignment counters scan due date + task status. Sparse — unassigned
 // applications carry no assignment block at all.
 applicationSchema.index({ "assignment.assignedTo": 1 }, { sparse: true });
+applicationSchema.index({ "disbursement.loanNumber": 1 }, { sparse: true });
 applicationSchema.index({ "assignment.taskStatus": 1, "assignment.dueDate": 1 }, { sparse: true });
 
 export default mongoose.model("Application", applicationSchema, "applications");

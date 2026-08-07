@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import api from "../services/api";
-import LoanEligibilityPanel from "./LoanEligibilityPanel";
 
 /**
  * ApplicantSwapCards — the two compact summary cards at the top of Application
@@ -11,7 +10,7 @@ import LoanEligibilityPanel from "./LoanEligibilityPanel";
  *
  * On success it calls onSwapped(), which is wired to the page's existing
  * refreshApplication() — that re-fetches the application and bumps the refresh
- * key the Timeline and Credit Note summary remount on. No page reload.
+ * key the Credit Note summary remounts on. No page reload.
  */
 
 const BLUE = "#2563eb";
@@ -136,14 +135,6 @@ export default function ApplicantSwapCards({ app, onSwapped }) {
           status={hasCoApplicant ? app.status : "—"}
         />
       </div>
-
-      {/* Advisory decision support. Its swap button opens the same confirmation
-          modal below — one modal, one request path, no duplicated logic. */}
-      <LoanEligibilityPanel
-        eligibility={app.eligibility}
-        canSwap={canSwap}
-        onSwap={() => setConfirming(true)}
-      />
 
       {confirming && (
         <div style={S.backdrop} onClick={() => !busy && setConfirming(false)}>
