@@ -1,6 +1,6 @@
 // src/pages/RCNumberPlatePage.jsx
 //
-// Phase 5 — RC & Number Plate listing.
+// RC & Number Plate listing — one table, both sections.
 //
 // Search, dealer filtering and pagination are ALL server-side: the page never
 // holds more than one page of rows. Only column sorting is client-side, because
@@ -29,11 +29,6 @@ import DealerFilterSelect from "../components/DealerFilterSelect";
 // The one colour this page names, and only for the sort glyph — the same
 // constant and the same icon Dashboard and FilesManagementTable use.
 const BRAND_BLUE = "#0B1F4D";
-
-const TABS = [
-  { key: "RC", label: "RC Uploads", statusField: "rcStatus" },
-  { key: "NUMBER_PLATE", label: "Number Plate", statusField: "numberPlateStatus" },
-];
 
 // The endpoint caps `limit` at 100 (Math.min(100, …), the same cap the other
 // paginated admin lists use). Offering 200 here would silently return 100 rows
@@ -65,8 +60,6 @@ function SortIcon({ dir }) {
 export default function RCNumberPlatePage() {
   const navigate = useNavigate();
 
-  const [tab, setTab] = useState("RC");
-
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dealer, setDealer] = useState("");
@@ -82,8 +75,6 @@ export default function RCNumberPlatePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sorting, setSorting] = useState([]);
-
-  const statusField = TABS.find((t) => t.key === tab)?.statusField || "rcStatus";
 
   /* ── Dealer list: the existing admin dealer endpoint, loaded once ──────── */
   useEffect(() => {
@@ -113,9 +104,11 @@ export default function RCNumberPlatePage() {
     setLoading(true);
     setError("");
     try {
+      // No `type`: the endpoint treats it as an optional narrowing filter and
+      // returns rcStatus AND numberPlateStatus on every row regardless, which
+      // is exactly what one combined table needs.
       const { data } = await API.get("/admin/vehicle/list", {
         params: {
-          type: tab,
           page,
           limit,
           search: debouncedSearch || undefined,
@@ -134,17 +127,9 @@ export default function RCNumberPlatePage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page, limit, debouncedSearch, dealer]);
+  }, [page, limit, debouncedSearch, dealer]);
 
   useEffect(() => { load(); }, [load]);
-
-  /* ── Tab switch: reload table data only, never the page ───────────────── */
-  const switchTab = (key) => {
-    if (key === tab) return;
-    setTab(key);
-    setPage(1);
-    setSorting([]);
-  };
 
   const resetFilters = () => {
     setSearch("");
@@ -166,7 +151,9 @@ export default function RCNumberPlatePage() {
       { accessorKey: "mobileNumber", header: "Mobile Number", cell: (c) => c.getValue() || "—" },
       { accessorKey: "dealerName", header: "Dealer Name", cell: (c) => c.getValue() || "—" },
       { accessorKey: "branch", header: "Branch", cell: (c) => c.getValue() || "—" },
-      { accessorKey: statusField, id: "status", header: "Status",
+      { accessorKey: "rcStatus", header: "RC Status",
+        cell: (c) => <StatusBadge status={c.getValue()} /> },
+      { accessorKey: "numberPlateStatus", header: "Number Plate Status",
         cell: (c) => <StatusBadge status={c.getValue()} /> },
       { id: "action", header: "", enableSorting: false,
         cell: (c) => (
@@ -178,7 +165,7 @@ export default function RCNumberPlatePage() {
           </button>
         ) },
     ],
-    [statusField, navigate]
+    [navigate]
   );
 
   const table = useReactTable({
@@ -213,20 +200,6 @@ export default function RCNumberPlatePage() {
               Refresh
             </button>
           </div>
-
-          {/* Tabs */}
-          <ul className="nav nav-pills mb-3">
-            {TABS.map((t) => (
-              <li className="nav-item" key={t.key}>
-                <button
-                  className={`nav-link ${tab === t.key ? "active" : ""}`}
-                  onClick={() => switchTab(t.key)}
-                >
-                  {t.label}
-                </button>
-              </li>
-            ))}
-          </ul>
 
           {/* Filters */}
           <div className="row g-2 mb-3 align-items-center">
@@ -276,7 +249,7 @@ export default function RCNumberPlatePage() {
 
           {/* Table */}
           {loading ? (
-            <TableSkeleton rows={8} cols={7} />
+            <TableSkeleton rows={8} cols={8} />
           ) : error ? (
             <div className="alert alert-danger">
               {error}{" "}
