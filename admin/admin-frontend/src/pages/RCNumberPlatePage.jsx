@@ -35,6 +35,40 @@ const BRAND_BLUE = "#0B1F4D";
 // while the footer still counted in 200s.
 const PAGE_SIZES = [25, 50, 100];
 
+/* ─── Summary card — the same treatment as the analytics page's cards ───── */
+function SummaryCard({ label, value, color, note }) {
+  return (
+    <div style={S.card}>
+      <div style={S.cardLabel}>{label}</div>
+      <div style={{ ...S.cardValue, color }}>{value}</div>
+      {note ? <div style={S.cardNote}>{note}</div> : null}
+    </div>
+  );
+}
+
+/* Design tokens lifted from the analytics cards and the dashboard table card,
+   so this page carries no palette or spacing of its own. */
+const S = {
+  cardGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gap: 14,
+    marginBottom: 18,
+  },
+  card: { background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "16px 18px" },
+  cardLabel: { fontSize: 12, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.04em" },
+  cardValue: { fontSize: 30, fontWeight: 800, marginTop: 6, lineHeight: 1.1 },
+  cardNote: { fontSize: 11, color: "#94A3B8", marginTop: 2 },
+
+  tableCard: {
+    background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB",
+    boxShadow: "0 2px 12px rgba(11,31,77,0.06)", overflow: "hidden",
+  },
+  // Roomier rows than the Bootstrap default, and evenly distributed columns.
+  th: { padding: "14px 16px", whiteSpace: "nowrap" },
+  td: { padding: "16px", verticalAlign: "middle" },
+};
+
 /* ─── Sort icon — same treatment as FilesManagementTable ─────────────────── */
 function SortIcon({ dir }) {
   if (!dir)
@@ -184,50 +218,74 @@ export default function RCNumberPlatePage() {
   const from = total === 0 ? 0 : (page - 1) * limit + 1;
   const to = Math.min(page * limit, total);
 
+  /* ── Summary cards ─────────────────────────────────────────────────────
+     `total` is the server's count for the whole filtered set. The three
+     breakdowns are counted from the rows THIS PAGE holds, because the list
+     endpoint returns one page at a time and no extra call may be made for
+     them — so each is labelled "on this page" rather than implying a global
+     figure. */
+  const summary = useMemo(() => {
+    const pending = (v) => String(v || "").toLowerCase() !== "uploaded";
+    return {
+      rcPending: items.filter((r) => pending(r.rcStatus)).length,
+      npPending: items.filter((r) => pending(r.numberPlateStatus)).length,
+      completed: items.filter((r) => !pending(r.rcStatus) && !pending(r.numberPlateStatus)).length,
+    };
+  }, [items]);
+
   return (
     <DashboardLayout>
       {/* The layout's content row is fixed-height and clipped, so list pages
           scroll inside it — the same arrangement the detail pages use. */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        <div className="container py-3">
+        {/* Full width: the table has eight columns and was being squeezed into
+            a centred container. */}
+        <div className="container-fluid px-4 py-3">
           {/* Header */}
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <h2 className="mb-0">
-              RC &amp; Number Plate
-              {total > 0 && <span className="badge bg-primary ms-2 fs-6">{total}</span>}
-            </h2>
-            <button className="btn btn-sm btn-outline-secondary" onClick={load}>
-              Refresh
-            </button>
+          <div className="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+            <div>
+              <h2 className="mb-1">RC &amp; Number Plate</h2>
+              <p className="text-muted mb-0" style={{ fontSize: 13.5 }}>
+                Manage RC documents and Number Plate uploads.
+              </p>
+            </div>
           </div>
 
-          {/* Filters */}
-          <div className="row g-2 mb-3 align-items-center">
-            <div className="col-12 col-md-5">
-              <input
-                type="search"
-                className="form-control form-control-sm"
-                placeholder="Search by Loan Number, Mobile Number or Customer Name"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="col-12 col-md-4">
+          {/* Summary — same card treatment as the analytics page. */}
+          <div style={S.cardGrid}>
+            <SummaryCard label="Total Applications" value={loading ? "…" : total.toLocaleString()} color="#0B1F4D" />
+            <SummaryCard label="RC Pending" value={loading ? "…" : summary.rcPending} color="#92400E" note="on this page" />
+            <SummaryCard label="Number Plate Pending" value={loading ? "…" : summary.npPending} color="#92400E" note="on this page" />
+            <SummaryCard label="Completed" value={loading ? "…" : summary.completed} color="#047857" note="on this page" />
+          </div>
+
+          {/* Toolbar — search, dealer filter, reset and refresh on one row. */}
+          <div className="d-flex align-items-center gap-2 flex-wrap mb-3">
+            <input
+              type="search"
+              className="form-control form-control-sm"
+              style={{ maxWidth: 380 }}
+              placeholder="Search by Loan Number, Mobile Number or Customer Name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div style={{ minWidth: 240 }}>
               <DealerFilterSelect
                 dealers={dealers}
                 value={dealer}
                 onChange={(id) => { setDealer(id); setPage(1); }}
               />
             </div>
-            <div className="col-12 col-md-3">
-              <button
-                className="btn btn-sm btn-outline-secondary"
-                onClick={resetFilters}
-                disabled={!hasFilters}
-              >
-                Reset
-              </button>
-            </div>
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              onClick={resetFilters}
+              disabled={!hasFilters}
+            >
+              Reset
+            </button>
+            <button className="btn btn-sm btn-outline-secondary ms-auto" onClick={load}>
+              Refresh
+            </button>
           </div>
 
           {/* Count + rows per page */}
@@ -258,8 +316,9 @@ export default function RCNumberPlatePage() {
           ) : table.getRowModel().rows.length === 0 ? (
             <p className="text-muted">No Records Found</p>
           ) : (
-            <div className="table-responsive">
-              <table className="table table-striped table-hover align-middle mb-0">
+            <div style={S.tableCard}>
+              <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0" style={{ tableLayout: "fixed" }}>
                 <thead className="table-light">
                   {table.getHeaderGroups().map((hg) => (
                     <tr key={hg.id}>
@@ -270,7 +329,7 @@ export default function RCNumberPlatePage() {
                           <th
                             key={header.id}
                             onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
-                            style={canSort ? { cursor: "pointer", userSelect: "none" } : undefined}
+                            style={{ ...S.th, ...(canSort ? { cursor: "pointer", userSelect: "none" } : null) }}
                           >
                             <div className="d-flex align-items-center gap-1">
                               {flexRender(header.column.columnDef.header, header.getContext())}
@@ -286,7 +345,11 @@ export default function RCNumberPlatePage() {
                   {table.getRowModel().rows.map((row) => (
                     <tr key={row.id}>
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className={cell.column.id === "action" ? "text-end" : undefined}>
+                        <td
+                          key={cell.id}
+                          className={cell.column.id === "action" ? "text-end" : undefined}
+                          style={{ ...S.td, ...(cell.column.id === "action" ? null : { overflow: "hidden", textOverflow: "ellipsis" }) }}
+                        >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
                       ))}
@@ -294,6 +357,7 @@ export default function RCNumberPlatePage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
 

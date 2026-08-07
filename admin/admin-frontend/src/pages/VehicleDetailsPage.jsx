@@ -34,14 +34,14 @@ const normalisePlate = (v) => String(v ?? "").trim().replace(/\s+/g, " ").toUppe
 
 /* ─── Presentational bits, matching the portal's card language ───────────── */
 const Card = ({ title, right, children }) => (
-  <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 18px", background: "#FAFBFC", borderBottom: "1px solid #F1F5F9" }}>
+  <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, marginBottom: 22, overflow: "hidden", boxShadow: "0 2px 12px rgba(11,31,77,0.06)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 22px", background: "#FAFBFC", borderBottom: "1px solid #F1F5F9" }}>
       <span style={{ fontSize: 12, fontWeight: 800, color: "#374151", textTransform: "uppercase", letterSpacing: "0.6px" }}>
         {title}
       </span>
       {right}
     </div>
-    <div style={{ padding: 18 }}>{children}</div>
+    <div style={{ padding: 22 }}>{children}</div>
   </div>
 );
 
@@ -55,20 +55,20 @@ const ReadOnlyField = ({ label, value }) => (
 );
 
 const EmptySlot = ({ text }) => (
-  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 150, borderRadius: 8, border: "1px dashed #E5E7EB", background: "#F9FAFB", color: "#9CA3AF", fontSize: 13, fontWeight: 600 }}>
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 190, borderRadius: 8, border: "1px dashed #E5E7EB", background: "#F9FAFB", color: "#9CA3AF", fontSize: 13, fontWeight: 600 }}>
     {text}
   </div>
 );
 
 /** One image slot — preview when present, placeholder when not. */
 const ImageSlot = ({ label, file, emptyText }) => (
-  <div style={{ flex: "1 1 220px", minWidth: 200 }}>
-    <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 6 }}>{label}</div>
+  <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+    <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8 }}>{label}</div>
     {file?.path ? (
       <FilePreview
         src={file.path}
         alt={label}
-        style={{ width: "100%", height: 150, objectFit: "cover", borderRadius: 8, border: "1px solid #E5E7EB" }}
+        style={{ width: "100%", height: 190, objectFit: "cover", borderRadius: 8, border: "1px solid #E5E7EB" }}
       />
     ) : (
       <EmptySlot text={emptyText} />
@@ -313,7 +313,7 @@ export default function VehicleDetailsPage() {
           <>
             {/* Customer information — always read-only */}
             <Card title="Customer Information">
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
                 <ReadOnlyField label="Loan No." value={data.loanNumber} />
                 <ReadOnlyField label="Branch" value={data.branch} />
                 <ReadOnlyField label="Customer Name" value={data.customerName} />
@@ -361,7 +361,7 @@ export default function VehicleDetailsPage() {
                 </div>
               )}
               {data.rc?.frontImage?.path || data.rc?.backImage?.path ? (
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                   <ImageSlot label="RC Front" file={data.rc.frontImage} emptyText="No RC Front" />
                   <ImageSlot label="RC Back" file={data.rc.backImage} emptyText="No RC Back" />
                 </div>
@@ -372,7 +372,7 @@ export default function VehicleDetailsPage() {
 
             {/* Number Plate */}
             <Card title="Number Plate" right={<StatusBadge status={data.numberPlate?.status} />}>
-              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
                 <div style={{ flex: "1 1 300px" }}>
                   <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 6 }}>
                     Number Plate
@@ -403,7 +403,7 @@ export default function VehicleDetailsPage() {
 
             {/* SPDC */}
             <Card title="SPDC">
-              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
                 <div style={{ flex: "1 1 300px" }}>
                   <label style={{ fontSize: 12, fontWeight: 700, color: "#475569", display: "block", marginBottom: 6 }}>
                     SPDC Number
