@@ -47,7 +47,11 @@ const searchClause = (term) => {
   const re = new RegExp(escapeRegex(term), "i");
   return {
     $or: [
-      { formId: re },                      // Loan Number
+      { "disbursement.loanNumber": re },   // Loan Number — the real one
+      // Form ID stays searchable: records approved before the disbursement step
+      // existed have no loan number, and this is the only identifier search the
+      // dealer has. It is a second way in, never the Loan Number itself.
+      { formId: re },                      // Form ID
       { "applicant.name": re },            // Customer Name
       { "applicant.applicant.name": re },  // …legacy nested shape
       { "applicant.mobileNumber": re },    // Mobile Number
@@ -79,7 +83,9 @@ const loanAmount = (app) => {
 const toPendingItem = (app) => ({
   id: String(app._id),
   applicationId: String(app._id),
-  loanNumber: app.formId || "",
+  // The lender's loan number, captured at disbursement. Blank when the record
+  // has not been disbursed — never the Form ID, which is a different identifier.
+  loanNumber: app?.disbursement?.loanNumber || "",
   customerName: customerName(app),
   mobileNumber: customerMobile(app),
   vehicle: [app?.vehicleDetails?.brandName, app?.vehicleDetails?.modelName]
@@ -96,7 +102,7 @@ const toPendingItem = (app) => ({
 });
 
 const LIST_FIELDS =
-  "formId applicant vehicleDetails dealer dealerDetails branch rcDetails numberPlateDetails approvedAt createdAt updatedAt";
+  "formId applicant vehicleDetails dealer dealerDetails branch rcDetails numberPlateDetails disbursement approvedAt createdAt updatedAt";
 
 /* ──────────────────────────── file handling ─────────────────────────────── */
 
@@ -262,7 +268,7 @@ export const uploadRc = async (req, res) => {
     return res.status(200).json({
       message: "RC uploaded successfully",
       applicationId: String(app._id),
-      loanNumber: app.formId || "",
+      loanNumber: app?.disbursement?.loanNumber || "",
       rcDetails: {
         status: UPLOADED,
         // The stored RELATIVE path. These images are deliberately not served
@@ -374,7 +380,7 @@ export const uploadNumberPlate = async (req, res) => {
     return res.status(200).json({
       message: "Number plate uploaded successfully",
       applicationId: String(app._id),
-      loanNumber: app.formId || "",
+      loanNumber: app?.disbursement?.loanNumber || "",
       numberPlateDetails: {
         status: UPLOADED,
         plateNumber,

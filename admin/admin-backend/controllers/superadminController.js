@@ -272,8 +272,10 @@ export const getFilesByType = async (req, res) => {
         const filter = await buildFinalizedFilter(req.admin);
         // approvedAt is the dedicated, immutable approval timestamp (source for
         // Processing Days); updatedAt is kept for the existing "Updated Date" column.
+        // `disbursement` carries the business date entered at disbursement, which
+        // the Approved export prints as its own column — additive projection only.
         applications = await ApprovedApplication.find(filter)
-          .select("formId applicant coApplicant vehicleDetails dealer dealerDetails status workflowStage createdAt updatedAt approvedAt")
+          .select("formId applicant coApplicant vehicleDetails dealer dealerDetails status workflowStage createdAt updatedAt approvedAt disbursement")
           .populate("dealer", "email userId name district branch")
           .lean();
         break;

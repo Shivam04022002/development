@@ -109,6 +109,31 @@ const getRejectionTs = (app) => app?.rejection?.rejectedAt || null;
 const getApprovalTs = (app) =>
   app?.approvedAt || app?.disbursedAt || app?.updatedAt || null;
 
+// The business date the admin entered when the application was disbursed. It is
+// its own field, distinct from every timestamp above — never approvedAt,
+// createdAt, updatedAt or disbursedAt (which records when the entry was made,
+// not the date it happened). Records approved before the disbursement step
+// existed carry no `disbursement` block at all.
+const getDisbursementTs = (app) => app?.disbursement?.disbursementDate || null;
+
+// A calendar date, not a timestamp: the day the admin picked, with no time
+// component. Rendered in LOCAL time, because the value is stored as that local
+// midnight converted to an instant (DisbursementModal sends
+// `new Date("YYYY-MM-DDT00:00:00").toISOString()`, which is local, not UTC) —
+// so 08 Aug picked in IST is stored as 07 Aug 18:30Z and only local formatting
+// reads it back as the 8th. This matches every other surface that shows the
+// field. Blank — never "—" or "Invalid Date" — when there is nothing to show.
+const formatBusinessDate = (val) => {
+  if (!val) return "";
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 // End date for the Processing Days calculation, per business rule:
 //   approved -> approval timestamp   (getApprovalTs — dedicated field, else updatedAt)
 //   rejected -> rejection timestamp  (rejection.rejectedAt — dedicated, immutable)
@@ -126,7 +151,7 @@ const buildRows = (applications, status, exportDate) =>
       createdTs,
       getProcessingEndTs(app, status, exportDate)
     );
-    return {
+    const row = {
       "Application ID": app?.formId || app?._id || "—",
       "Applicant Name": getApplicantName(app),
       Branch: getBranch(app),
@@ -141,6 +166,17 @@ const buildRows = (applications, status, exportDate) =>
       "Processing Days": days === null ? "N/A" : days,
       "Updated Date": formatDate(getUpdatedTs(app, status)),
     };
+
+    // Approved sheet only: the disbursement date sits immediately beside the
+    // approval date (for approved records, "Updated Date" is the approval
+    // time — see getUpdatedTs). The key is set on every approved row so the
+    // header is present even when no record has been disbursed yet; the pending
+    // and rejected sheets keep exactly the columns they had.
+    if (status === "approved") {
+      row["Disbursement Date"] = formatBusinessDate(getDisbursementTs(app));
+    }
+
+    return row;
   });
 
 const COL_WIDTHS = [
@@ -154,6 +190,7 @@ const COL_WIDTHS = [
   { wch: 24 }, // Created Date
   { wch: 16 }, // Processing Days
   { wch: 24 }, // Updated Date
+  { wch: 24 }, // Disbursement Date (approved sheet only; ignored elsewhere)
 ];
 
 const buildDateSuffix = (dateFrom, dateTo) => {

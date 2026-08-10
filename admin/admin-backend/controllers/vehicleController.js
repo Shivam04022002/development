@@ -45,7 +45,11 @@ const searchClause = (term) => {
   const re = new RegExp(escapeRegex(term), "i");
   return {
     $or: [
-      { formId: re },                      // Loan Number
+      { "disbursement.loanNumber": re },   // Loan Number — the real one
+      // Form ID stays searchable: records approved before the disbursement step
+      // existed have no loan number, and this box is the only identifier search
+      // on the page. It is a second way in, never the Loan Number itself.
+      { formId: re },                      // Form ID
       { "applicant.name": re },            // Customer Name
       { "applicant.applicant.name": re },  // …legacy nested shape
       { "applicant.mobileNumber": re },    // Mobile Number
@@ -135,7 +139,7 @@ export const listVehicleDocuments = async (req, res) => {
     const [rows, total] = await Promise.all([
       ApprovedApplication.find(filter)
         .select(
-          "formId applicant dealerDetails branch vehicleDetails rcDetails numberPlateDetails spdcDetails approvedAt createdAt updatedAt"
+          "formId applicant dealerDetails branch vehicleDetails rcDetails numberPlateDetails spdcDetails disbursement approvedAt createdAt updatedAt"
         )
         .sort({ approvedAt: -1, createdAt: -1 })
         .skip(skip)
@@ -146,13 +150,17 @@ export const listVehicleDocuments = async (req, res) => {
 
     const items = rows.map((app) => ({
       applicationId: String(app._id),
-      loanNumber: app.formId || "",
+      // The lender's loan number, captured at disbursement. Blank when the
+      // record has not been disbursed — never the Form ID, which is a different
+      // identifier.
+      loanNumber: app?.disbursement?.loanNumber || "",
       customerName: customerName(app),
       mobileNumber: customerMobile(app),
       branch: branchName(app),
       dealerName: app?.dealerDetails?.name || "",
       amount: loanAmount(app),
-      disbursementDate: app.approvedAt || app.updatedAt || null,
+      // The business date the admin entered, not the approval timestamp.
+      disbursementDate: app?.disbursement?.disbursementDate || null,
       rcStatus: sectionStatus(app.rcDetails),
       numberPlateStatus: sectionStatus(app.numberPlateDetails),
       plateNumber: app?.numberPlateDetails?.plateNumber || "",
@@ -193,13 +201,14 @@ export const getVehicleDetails = async (req, res) => {
 
     return res.json({
       applicationId: String(app._id),
-      loanNumber: app.formId || "",
+      // Same rule as the list above: the real loan number, or blank.
+      loanNumber: app?.disbursement?.loanNumber || "",
       branch: branchName(app),
       customerName: customerName(app),
       contact: customerMobile(app),
       amount: loanAmount(app),
       dealerName: app?.dealerDetails?.name || app?.dealer?.name || "",
-      disbursementDate: app.approvedAt || app.updatedAt || null,
+      disbursementDate: app?.disbursement?.disbursementDate || null,
 
       rc: {
         status: sectionStatus(app.rcDetails),
