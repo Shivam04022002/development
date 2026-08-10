@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { cibilSubjects } from "./cibilSubjectSchemas.js";
 
 const RejectedSchema = new mongoose.Schema(
   {
@@ -39,6 +40,12 @@ const RejectedSchema = new mongoose.Schema(
       requestId: { type: String, default: "" },
       fetchedAt: { type: Date, default: null },
     },
+
+    // Carried across from the Application at auto-rejection so the per-person
+    // summaries are not lost when the record leaves `applications` (Phase 1 —
+    // multi-subject storage). `cibil` above is unchanged and still holds the
+    // applicant's summary, which is what the Rejected module reads.
+    cibilSubjects,
 
     rejection: {
       rejectedBy: String,

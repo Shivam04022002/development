@@ -3,6 +3,7 @@ import { rcDetails, numberPlateDetails, spdcDetails } from "./vehicleDocSchemas.
 import { documentVerification } from "./documentVerificationSchemas.js";
 import { assignment } from "./assignmentSchemas.js";
 import { disbursement } from "./disbursementSchemas.js";
+import { cibilSubjects } from "./cibilSubjectSchemas.js";
 
 /**
  * Application — the SINGLE source of truth for a loan application.
@@ -124,6 +125,16 @@ const applicationSchema = new mongoose.Schema(
       // the applicant", which is what it meant at the time.
       subjectPan: { type: String, default: "" },
     },
+
+    // ── CIBIL summaries per person (Phase 1 — multi-subject storage) ─────────
+    // `cibil` above holds ONE summary and is unchanged: it is, and remains, the
+    // applicant's. This list generalises it so the same application can also
+    // carry the co-applicant's summary once a second pull exists.
+    //
+    // Written by cibilProcessingService alongside `cibil`; read by nothing yet.
+    // Every consumer still reads `cibil`, so this field is additive and inert
+    // until Phase 2 moves them over. At most one entry per subjectPan.
+    cibilSubjects,
 
     // ── RC & Number Plate module ─────────────────────────────────────────────
     // Additive sections, shared verbatim with ApprovedApplication (see
