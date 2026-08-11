@@ -25,6 +25,15 @@ const applicationHistorySchema = new mongoose.Schema(
         "CIBIL_REQUESTED",
         "CIBIL_RESPONSE_RECEIVED",
         "CIBIL_PENDING",
+        // A pull was deliberately not made because that subject already has a
+        // report (the duplicate-fetch guard). Without this value the entry was
+        // rejected by enum validation and silently dropped, because
+        // createHistoryEntry swallows its errors.
+        "CIBIL_SKIPPED",
+        // On-demand co-applicant bureau fetch, requested explicitly by an admin.
+        "CO_APPLICANT_CIBIL_FETCH_REQUESTED",
+        "CO_APPLICANT_CIBIL_FETCHED",
+        "CO_APPLICANT_CIBIL_FETCH_FAILED",
         "REVOKED",
         "COMMENT",
         "COMMENT_ADDED",
