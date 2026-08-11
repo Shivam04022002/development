@@ -13,10 +13,53 @@ import RejectedApplication from "../models/RejectedApplication.js";
 import CibilReport from "../models/CibilReport.js";
 import { generateCibilReportPdf } from "../utils/cibilReportPdf.js";
 import { buildReportModel } from "../utils/cibilReportData.js";
+import { normalizePan } from "../models/cibilSubjectSchemas.js";
 import { absFromRel } from "../utils/fileStorage.js";
 import { logError } from "../utils/log.js";
 
 const NOT_AVAILABLE = { success: false, message: "CIBIL data not available." };
+
+/* ── Subject selection ────────────────────────────────────────────────────
+ * An application may now hold one report per person, keyed by subjectPan —
+ * the same key saveCibilReport upserts on and the compound unique index
+ * enforces. These endpoints select by that key.
+ *
+ * `?subjectPan=` follows the query-parameter convention already used elsewhere
+ * in this backend for narrowing an existing resource (assignmentController's
+ * `?staffId=`), so no new convention is introduced.
+ *
+ * Omitting it preserves the previous behaviour exactly: the first report for
+ * the application, and `app.cibil` as the summary. That is what every existing
+ * caller does today, so none of them need changing in this phase.
+ */
+
+/** The requested subject, normalised with the canonical helper. "" = not specified. */
+export const subjectFromRequest = (req) => normalizePan(req.query?.subjectPan);
+
+/**
+ * The CIBIL summary belonging to THIS subject.
+ *
+ * `app.cibil` is the applicant's summary. Returning it for a co-applicant
+ * request would leak one person's score, requestId and report date alongside
+ * another person's raw bureau data, so it is returned only when it provably
+ * belongs to the subject asked for.
+ *
+ * Resolution order, subject-scoped requests only:
+ *   1. the matching `cibilSubjects` entry
+ *   2. `app.cibil` — ONLY if its own subjectPan is this subject
+ *   3. {} — never another subject's summary
+ */
+export const summaryForSubject = (app, subjectPan) => {
+  const legacy = app?.cibil || {};
+  if (!subjectPan) return legacy; // legacy request: unchanged behaviour
+
+  const entry = (app?.cibilSubjects || []).find(
+    (e) => normalizePan(e?.subjectPan) === subjectPan
+  );
+  if (entry) return entry;
+
+  return normalizePan(legacy.subjectPan) === subjectPan ? legacy : {};
+};
 
 /** The application may have moved to the approved / rejected collection. */
 async function findApplication(applicationId) {
@@ -32,8 +75,13 @@ async function findApplication(applicationId) {
  * Load the stored response. Prefers the Mongo copy; older records that predate
  * Mongo storage keep the JSON as a file, so fall back to rawResponsePath.
  */
-async function loadRawResponse(applicationId) {
-  const report = await CibilReport.findOne({ applicationId }).lean();
+async function loadRawResponse(applicationId, subjectPan = "") {
+  // With a subject, the lookup is exact: { applicationId, subjectPan }. There is
+  // deliberately NO fallback to an applicationId-only query — falling back
+  // would hand back another person's bureau report when the requested subject
+  // has none, which is the one outcome these endpoints must never produce.
+  const filter = subjectPan ? { applicationId, subjectPan } : { applicationId };
+  const report = await CibilReport.findOne(filter).lean();
   if (!report) return { report: null, raw: null };
 
   if (report.rawResponse !== null && report.rawResponse !== undefined) {
@@ -59,16 +107,17 @@ async function loadRawResponse(applicationId) {
 export const getCibilJson = async (req, res) => {
   try {
     const { applicationId } = req.params;
+    const subjectPan = subjectFromRequest(req);
     const app = await findApplication(applicationId);
     if (!app) return res.status(404).json(NOT_AVAILABLE);
 
-    const { raw } = await loadRawResponse(applicationId);
+    const { raw } = await loadRawResponse(applicationId, subjectPan);
     if (raw === null) return res.status(404).json(NOT_AVAILABLE);
 
     return res.json({
       success: true,
       formId: app.formId || String(app._id),
-      cibil: app.cibil || {},
+      cibil: summaryForSubject(app, subjectPan),
       rawResponse: raw,
     });
   } catch (err) {
@@ -86,13 +135,14 @@ export const getCibilJson = async (req, res) => {
 export const getCibilModel = async (req, res) => {
   try {
     const { applicationId } = req.params;
+    const subjectPan = subjectFromRequest(req);
     const app = await findApplication(applicationId);
     if (!app) return res.status(404).json(NOT_AVAILABLE);
 
-    const { raw } = await loadRawResponse(applicationId);
+    const { raw } = await loadRawResponse(applicationId, subjectPan);
     if (raw === null) return res.status(404).json(NOT_AVAILABLE);
 
-    const model = buildReportModel({ app, cibil: app.cibil || {}, raw });
+    const model = buildReportModel({ app, cibil: summaryForSubject(app, subjectPan), raw });
     const statusMessage =
       raw && typeof raw === "object" && raw.status !== "success" && typeof raw.message === "string"
         ? raw.message
@@ -108,14 +158,15 @@ export const getCibilModel = async (req, res) => {
 /** Shared PDF path for inline viewing and attachment download. */
 async function streamPdf(req, res, disposition) {
   const { applicationId } = req.params;
+  const subjectPan = subjectFromRequest(req);
   const app = await findApplication(applicationId);
   if (!app) return res.status(404).json(NOT_AVAILABLE);
 
-  const { raw } = await loadRawResponse(applicationId);
+  const { raw } = await loadRawResponse(applicationId, subjectPan);
   if (raw === null) return res.status(404).json(NOT_AVAILABLE);
 
   const formId = app.formId || String(app._id);
-  const pdf = await generateCibilReportPdf({ app, cibil: app.cibil || {}, raw });
+  const pdf = await generateCibilReportPdf({ app, cibil: summaryForSubject(app, subjectPan), raw });
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Length", pdf.length);
