@@ -33,6 +33,9 @@ const STATUS_CODE = {
   not_found: 404,
   not_configured: 503,
   vendor_failed: 502,
+  // Same upstream-failure class as vendor_failed — the distinction is what the
+  // operator should do next, carried in the body, not a new HTTP code.
+  not_retryable: 502,
 };
 
 /** POST /api/cibil/:applicationId/co-applicant/fetch — admin only. */
@@ -55,6 +58,9 @@ export const fetchCoApplicantCibilReport = async (req, res) => {
       score: outcome.score,
       reportId: outcome.reportId,
       summaryMirrored: outcome.summaryMirrored,
+      // "retryable" | "not_retryable" | "unknown" — sanitized advice, so the UI
+      // can tell a temporary fault from one that will fail identically again.
+      retryability: outcome.retryability,
       retryable: outcome.retryable,
       message: outcome.message || outcome.reason,
     });

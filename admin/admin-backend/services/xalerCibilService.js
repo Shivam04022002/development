@@ -258,6 +258,62 @@ function extractReport(data) {
   return { extracted, hasScore, diagnostics };
 }
 
+/* ── Failure normalisation ────────────────────────────────────────────────
+ * Two small, shared decisions about a FAILED vendor response. Success parsing
+ * is untouched.
+ *
+ * Why this exists: the HTTP 400 branch below runs before the `status: "error"`
+ * branch, and it only read `data.error`. This vendor puts its explanation in
+ * `data.message`, so a real 400 surfaced as the generic "CIBIL request
+ * rejected (HTTP 400)" and the useful text — e.g. that the bureau holds no
+ * credit record for the identity supplied — was discarded before anyone saw it.
+ */
+
+/** Redact anything identity-shaped before a vendor string is stored or logged. */
+export const sanitizeVendorText = (text) =>
+  String(text ?? "")
+    .replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/gi, "[PAN]")     // PAN
+    .replace(/\b\d{12}\b/g, "[AADHAAR]")                  // Aadhaar
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "[DATE]")          // DOB-shaped
+    .trim()
+    .slice(0, 300);
+
+/**
+ * The most useful sanitised explanation the vendor gave, in preference order:
+ * the structured `error`, then `message`, then a generic HTTP fallback.
+ */
+export function vendorFailureReason(data, httpStatus, fallback) {
+  const structured = typeof data?.error === "string" ? data.error.trim() : "";
+  const message = typeof data?.message === "string" ? data.message.trim() : "";
+  const chosen = structured || message;
+  return chosen
+    ? sanitizeVendorText(chosen)
+    : fallback || `CIBIL request rejected (HTTP ${httpStatus})`;
+}
+
+/**
+ * Is repeating this identical request worth another paid call?
+ *
+ *   "retryable"     transport/temporary — a repeat may succeed
+ *   "not_retryable" deterministic — the same request will fail the same way
+ *   "unknown"       insufficient evidence; the caller must not assume either
+ *
+ * The vendor's own boolean is preferred when it actually sends one. Otherwise
+ * this falls back to the rule the retry loop already applies: 5xx/429 are
+ * retried, a 400 is not, because "the request is wrong, so retrying it
+ * unchanged cannot help". No vendor-specific condition is invented, and no
+ * free-text message is pattern-matched.
+ */
+export function classifyRetryability({ data, httpStatus, transport = false } = {}) {
+  if (transport) return "retryable";
+  if (typeof data?.retryable === "boolean") return data.retryable ? "retryable" : "not_retryable";
+  if (typeof httpStatus === "number") {
+    if (httpStatus >= 500 || httpStatus === 429) return "retryable";
+    if (httpStatus === 400) return "not_retryable";
+  }
+  return "unknown";
+}
+
 /** Parse a response body as JSON, tolerating non-JSON payloads. */
 async function parseBody(res) {
   const text = await res.text();
@@ -349,6 +405,7 @@ export async function fetchCibilReport(applicant, config) {
           ok: false,
           invalid: true,
           reason: "Invalid CIBIL response",
+          retryability: classifyRetryability({ httpStatus }),
           raw: data ?? null,
           attempts,
           request: sanitizedRequest,
@@ -361,7 +418,8 @@ export async function fetchCibilReport(applicant, config) {
         return {
           ok: false,
           invalid: true,
-          reason: data.error || `CIBIL request rejected (HTTP ${httpStatus})`,
+          reason: vendorFailureReason(data, httpStatus),
+          retryability: classifyRetryability({ data, httpStatus }),
           raw: data,
           attempts,
           request: sanitizedRequest,
@@ -380,7 +438,9 @@ export async function fetchCibilReport(applicant, config) {
         return {
           ok: false,
           unavailable: true,
-          reason: data.message || "CIBIL identity verification pending",
+          reason: vendorFailureReason(data, httpStatus, "CIBIL identity verification pending"),
+          // doc §5.5: no charge applied and the same consumer may be retried.
+          retryability: "retryable",
           raw: data,
           attempts,
           request: sanitizedRequest,
@@ -392,7 +452,8 @@ export async function fetchCibilReport(applicant, config) {
         return {
           ok: false,
           invalid: true,
-          reason: data.message || "CIBIL flow failed",
+          reason: vendorFailureReason(data, httpStatus, "CIBIL flow failed"),
+          retryability: classifyRetryability({ data, httpStatus }),
           raw: data,
           attempts,
           request: sanitizedRequest,
@@ -414,7 +475,12 @@ export async function fetchCibilReport(applicant, config) {
           acceptedScoreRange: diagnostics.scoreRange,
           message: typeof data?.message === "string" ? data.message : null,
         });
-        return { ok: false, invalid: true, reason: "CIBIL score missing in response", raw: data, attempts, request: sanitizedRequest };
+        return {
+          ok: false, invalid: true,
+          reason: "CIBIL score missing in response",
+          retryability: classifyRetryability({ data, httpStatus }),
+          raw: data, attempts, request: sanitizedRequest,
+        };
       }
 
       logEvent("cibil_parsed", {
@@ -441,6 +507,7 @@ export async function fetchCibilReport(applicant, config) {
     ok: false,
     unavailable: true,
     reason: "Waiting for CIBIL Response",
+    retryability: classifyRetryability({ transport: true }),
     attempts,
     error: lastError?.message,
     request: sanitizedRequest,

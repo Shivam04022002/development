@@ -200,6 +200,32 @@ check("disabled — not hidden — while a fetch is in flight", () => {
 
 console.log("\noutcome messages");
 
+// Phase 2B.6 — a deterministic no-record failure must read differently from a
+// transient one, so the operator does not repeat a paid request that cannot
+// succeed. This is the exact case that occurred in production.
+check("not_retryable tells the operator NOT to retry, and why", () => {
+  const o = fetchOutcome({ status: "not_retryable" });
+  assert.equal(o.ok, false);
+  assert.equal(o.refresh, false, "a failed fetch must not trigger a data refresh");
+  assert.match(o.message, /No CIBIL credit record was found/);
+  assert.match(o.message, /Do not retry unless/);
+  assert.match(o.message, /identity\/PAN details have been corrected/);
+});
+
+check("the retryable and non-retryable messages are distinct", () => {
+  assert.notEqual(FETCH_MESSAGES.not_retryable, FETCH_MESSAGES.vendor_failed);
+  assert.match(FETCH_MESSAGES.vendor_failed, /No retry should happen automatically/);
+});
+
+check("no message exposes PAN, Aadhaar, DOB or raw vendor content", () => {
+  for (const [status, msg] of Object.entries(FETCH_MESSAGES)) {
+    assert.doesNotMatch(msg, /\b[A-Z]{5}[0-9]{4}[A-Z]\b/, `${status} leaks a PAN`);
+    assert.doesNotMatch(msg, /\b\d{12}\b/, `${status} leaks an Aadhaar`);
+    assert.doesNotMatch(msg, /\b\d{4}-\d{2}-\d{2}\b/, `${status} leaks a date`);
+    assert.doesNotMatch(msg, /rawResponse|client_key|identity_sent/, `${status} leaks payload`);
+  }
+});
+
 check("every documented backend status maps to its own message", () => {
   const expected = {
     fetched: "Co-Applicant CIBIL report fetched successfully.",
@@ -216,7 +242,9 @@ check("every documented backend status maps to its own message", () => {
     assert.equal(FETCH_MESSAGES[status], msg, `message for ${status}`);
     assert.equal(fetchOutcome({ status }).message, msg);
   }
-  assert.equal(Object.keys(FETCH_MESSAGES).length, 9, "all nine outcomes covered");
+  // Nine original outcomes plus not_retryable, added in Phase 2B.6.
+  assert.ok(FETCH_MESSAGES.not_retryable, "not_retryable is covered");
+  assert.equal(Object.keys(FETCH_MESSAGES).length, 10, "all ten outcomes covered");
 });
 
 check("only fetched / already_exists count as success and trigger a refresh", () => {
@@ -225,7 +253,7 @@ check("only fetched / already_exists count as success and trigger a refresh", ()
   assert.equal(fetchOutcome({ status: "already_exists" }).ok, true);
   assert.equal(fetchOutcome({ status: "already_exists" }).refresh, true);
   for (const s of ["in_progress", "missing_pan", "no_co_applicant", "consent_required",
-                   "not_found", "not_configured", "vendor_failed"]) {
+                   "not_found", "not_configured", "vendor_failed", "not_retryable"]) {
     assert.equal(fetchOutcome({ status: s }).ok, false, `${s} must not be success`);
     assert.equal(fetchOutcome({ status: s }).refresh, false, `${s} must not refresh`);
   }

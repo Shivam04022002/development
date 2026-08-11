@@ -252,7 +252,10 @@ await acheck("Xaler failure → reservation released, no report, retry works", a
   const reports = fakeReports();
   const app = fakeApp();
   let attempt = 0;
-  const vendor = { calls: [], fn: async (p, c) => { vendor.calls.push(1); attempt += 1; return attempt === 1 ? { ok: false, reason: "Waiting for CIBIL Response" } : { ok: true, extracted: { score: 700, requestId: "tu_retry" }, raw: {}, request: {} }; } };
+  // The real client now always classifies a failure; a transport exhaustion
+  // ("Waiting for CIBIL Response") is retryable, which is what makes the
+  // follow-up attempt below legitimate.
+  const vendor = { calls: [], fn: async (p, c) => { vendor.calls.push(1); attempt += 1; return attempt === 1 ? { ok: false, reason: "Waiting for CIBIL Response", retryability: "retryable" } : { ok: true, extracted: { score: 700, requestId: "tu_retry" }, raw: {}, request: {} }; } };
   const first = await fetchCoApplicantCibil(APP_ID, baseDeps({ app, reports, vendor }).deps);
   assert.equal(first.status, "vendor_failed");
   assert.equal(first.retryable, true);
@@ -287,6 +290,98 @@ await acheck("a vendor that throws is contained and releases the reservation", a
   assert.equal(out.ok, false);
   assert.equal(out.status, "vendor_failed");
   assert.equal(reports.rows.length, 0, "no stuck reservation");
+});
+
+console.log("\nvendor failure classification (Phase 2B.6)");
+
+// The exact production case: HTTP 400, no bureau record, vendor says not retryable.
+const NO_RECORD = {
+  ok: false,
+  invalid: true,
+  reason: "TransUnion CIBIL has no credit record matching the identity details supplied.",
+  retryability: "not_retryable",
+};
+
+await acheck("no-record failure → status not_retryable, reservation released", async () => {
+  const reports = fakeReports();
+  const t = baseDeps({ reports, vendor: { calls: [], fn: async () => NO_RECORD } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "not_retryable");
+  assert.equal(out.retryability, "not_retryable");
+  assert.equal(out.retryable, false, "must not invite another paid request");
+  assert.equal(reports.rows.length, 0, "reservation still released — subject never stuck");
+});
+
+await acheck("no-record failure surfaces the vendor's explanation, not a generic string", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => NO_RECORD } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.match(out.reason, /no credit record matching the identity details/);
+});
+
+await acheck("retryable vendor failure keeps status vendor_failed", async () => {
+  const reports = fakeReports();
+  const t = baseDeps({ reports, vendor: { calls: [], fn: async () => ({ ok: false, reason: "Waiting for CIBIL Response", retryability: "retryable" }) } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "vendor_failed");
+  assert.equal(out.retryable, true);
+  assert.equal(reports.rows.length, 0, "reservation released");
+});
+
+await acheck("unknown retryability is neither promised nor denied", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => ({ ok: false, reason: "odd", retryability: "unknown" }) } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "vendor_failed");
+  assert.equal(out.retryability, "unknown");
+  assert.equal(out.retryable, false, "unknown must not be reported as retryable");
+});
+
+await acheck("a missing retryability defaults to unknown", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => ({ ok: false, reason: "no field" }) } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.retryability, "unknown");
+});
+
+await acheck("a thrown client is classed retryable (transport fault)", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => { throw new Error("socket hang up"); } } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.retryability, "retryable");
+});
+
+await acheck("no failure path retries the vendor automatically", async () => {
+  const vendor = { calls: [], fn: async () => { vendor.calls.push(1); return NO_RECORD; } };
+  const t = baseDeps({ vendor });
+  await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(vendor.calls.length, 1, "exactly one call — never repeated by the service");
+});
+
+await acheck("the audit remark carries the category and a sanitised reason only", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => ({ ...NO_RECORD, reason: "No record for ABCDE1234F" }) } });
+  const remarks = [];
+  t.deps.history = async (e) => { t.hist.push(e.actionType); remarks.push(e.remarks || ""); };
+  await fetchCoApplicantCibil(APP_ID, t.deps);
+  const failed = remarks.find((r) => r.includes("failed"));
+  assert.match(failed, /not_retryable/, "category recorded");
+  assert.ok(!failed.includes("ABCDE1234F"), "PAN must never reach history");
+  assert.match(failed, /\[PAN\]/, "redacted instead");
+});
+
+console.log("\nrequest observability (Phase 2B.6)");
+
+await acheck("a coapplicant_cibil_request event is emitted per real invocation", async () => {
+  // The service logs through utils/log; capture stdout to prove the event fires
+  // exactly once and carries no PAN.
+  const lines = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...a) => { lines.push(String(chunk)); return orig(chunk, ...a); };
+  try {
+    await fetchCoApplicantCibil(APP_ID, baseDeps().deps);
+  } finally {
+    process.stdout.write = orig;
+  }
+  const reqLines = lines.filter((l) => l.includes("coapplicant_cibil_request"));
+  assert.equal(reqLines.length, 1, `exactly one request event, got ${reqLines.length}`);
+  assert.ok(reqLines[0].includes("coApplicant"), "distinguishes the subject");
+  assert.ok(!reqLines[0].includes(PAN_COAPP), "no PAN in the request log");
 });
 
 console.log("\nvalidation");

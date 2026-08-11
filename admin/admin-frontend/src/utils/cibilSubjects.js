@@ -129,6 +129,12 @@ export const FETCH_MESSAGES = {
   not_found: "Application or co-applicant was not found.",
   not_configured: "CIBIL service is not configured.",
   vendor_failed: "Co-Applicant CIBIL request failed. No retry should happen automatically.",
+  // A deterministic outcome: the bureau holds no record matching the identity
+  // supplied. Repeating the same paid request will fail identically, so the
+  // message says what would have to change first rather than inviting a retry.
+  not_retryable:
+    "No CIBIL credit record was found for this co-applicant. Do not retry unless the " +
+    "identity/PAN details have been corrected or the bureau specifically advises another attempt.",
 };
 
 /** Which outcomes mean the stored data changed and the view should reload. */

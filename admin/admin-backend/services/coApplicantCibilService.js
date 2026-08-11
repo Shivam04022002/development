@@ -28,7 +28,7 @@ import CibilReport from "../models/CibilReport.js";
 import Application from "../models/Application.js";
 import ApprovedApplication from "../models/ApprovedApplication.js";
 import RejectedApplication from "../models/RejectedApplication.js";
-import { fetchCibilReport } from "./xalerCibilService.js";
+import { fetchCibilReport, sanitizeVendorText } from "./xalerCibilService.js";
 import { getDecryptedCibilConfig } from "./systemSettingsService.js";
 import { createHistoryEntry } from "../controllers/formTrackingController.js";
 import { partySubjectPan, upsertCibilSubject, toCibilSubject } from "../models/cibilSubjectSchemas.js";
@@ -203,6 +203,19 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
 
   // 7 + 8 · only the reservation holder calls the vendor, with the existing
   // client and the existing payload builder — unchanged.
+  //
+  // Emitted immediately before the call and exactly once per real invocation,
+  // so "was Xaler actually called?" is answerable from a request event rather
+  // than reconstructed from response bodies. Mirrors the applicant flow's
+  // `cibil_request`, distinguished by name and by `subject`. No PAN, no
+  // payload, no credentials — the subject is identified by the application.
+  logEvent("coapplicant_cibil_request", {
+    applicationId: String(app._id),
+    formId: app.formId,
+    subject: "coApplicant",
+    reportId: String(reservedId),
+  });
+
   let result;
   try {
     result = await fetchReport(coApplicant, config);
@@ -210,26 +223,50 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
     // fetchCibilReport is documented never to throw; treat a throw as a failure
     // rather than leaking a stuck reservation.
     await releaseReservation(reports, reservedId);
-    await hist("CO_APPLICANT_CIBIL_FETCH_FAILED", `Co-applicant CIBIL failed — ${err?.message || "error"}`);
-    logError("coapplicant_cibil_threw", { applicationId: String(app._id), error: err?.message });
-    return { ok: false, status: "vendor_failed", subject: "coApplicant", subjectPan, reason: err?.message || "error" };
+    const reason = sanitizeVendorText(err?.message || "error");
+    await hist("CO_APPLICANT_CIBIL_FETCH_FAILED", `Co-applicant CIBIL failed (unknown) — ${reason}`);
+    logError("coapplicant_cibil_threw", { applicationId: String(app._id), subject: "coApplicant", error: reason });
+    // A thrown client is a transport-class fault: retrying may legitimately work.
+    return {
+      ok: false, status: "vendor_failed", subject: "coApplicant", subjectPan,
+      reason, retryability: "retryable", retryable: true,
+    };
   }
 
   if (!result?.ok) {
-    // 8 · failure must not leave the subject permanently blocked.
+    // 8 · failure must not leave the subject permanently blocked. The
+    // reservation is released for EVERY failure kind — retryable or not — so
+    // the subject is never stuck. "Not retryable" is advice to the operator,
+    // never a lock on the data.
     await releaseReservation(reports, reservedId);
-    await hist("CO_APPLICANT_CIBIL_FETCH_FAILED", `Co-applicant CIBIL failed — ${result?.reason || "unavailable"}`);
+
+    // The vendor's own judgement when it sends one, else the transport/status
+    // rule. A deterministic failure — the bureau holding no record for this
+    // identity — must not invite another identical paid request.
+    const retryability = result?.retryability || "unknown";
+    const notRetryable = retryability === "not_retryable";
+    const reason = sanitizeVendorText(result?.reason || "unavailable");
+
+    await hist(
+      "CO_APPLICANT_CIBIL_FETCH_FAILED",
+      `Co-applicant CIBIL failed (${retryability}) — ${reason}`
+    );
     logEvent("coapplicant_cibil_response", {
-      applicationId: String(app._id), formId: app.formId, ok: false, reason: result?.reason,
+      applicationId: String(app._id), formId: app.formId, subject: "coApplicant",
+      ok: false, retryability, reason,
     });
-    // Explicitly NOT a low score and NOT a rejection — the application is untouched.
+
+    // Explicitly NOT a low score and NOT a rejection — the application is
+    // untouched either way. Only the status distinguishes what the operator
+    // should do next.
     return {
       ok: false,
-      status: "vendor_failed",
+      status: notRetryable ? "not_retryable" : "vendor_failed",
       subject: "coApplicant",
       subjectPan,
-      reason: result?.reason || "unavailable",
-      retryable: true,
+      reason,
+      retryability,
+      retryable: retryability === "retryable",
     };
   }
 
