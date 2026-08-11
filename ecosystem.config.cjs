@@ -19,8 +19,13 @@ module.exports = {
     // -------------------------------------------------------------------------
     {
       name: 'admin-backend',
-      cwd: '/var/www/dealermitra/admin/admin-backend',
+      cwd: '/var/www/development/admin/admin-backend',
       script: 'server.js',
+      // Load .env before any module is evaluated. ES module imports are
+      // hoisted above server.js's dotenv.config() call, so constants read at
+      // module scope (FILE_PUBLIC_BASE, ADMIN_BACKEND_URL, INTERNAL_API_KEY,
+      // JWT_SECRET) would otherwise be captured before .env is loaded.
+      node_args: '--env-file=.env',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -56,8 +61,13 @@ module.exports = {
     // -------------------------------------------------------------------------
     {
       name: 'mobile-backend',
-      cwd: '/var/www/dealermitra/native-app/backend/server',
+      cwd: '/var/www/development/native-app/backend/server',
       script: 'server.js',
+      // Load .env before any module is evaluated. ES module imports are
+      // hoisted above server.js's dotenv.config() call, so constants read at
+      // module scope (FILE_PUBLIC_BASE, ADMIN_BACKEND_URL, INTERNAL_API_KEY,
+      // JWT_SECRET) would otherwise be captured before .env is loaded.
+      node_args: '--env-file=.env',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
