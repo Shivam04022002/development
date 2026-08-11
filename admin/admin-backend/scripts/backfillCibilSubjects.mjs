@@ -54,6 +54,7 @@
 
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import { pathToFileURL } from "node:url";
 
 // ── autoIndex OFF ───────────────────────────────────────────────────────────
 // Mongoose builds every index declared on a registered schema when the
@@ -74,6 +75,7 @@ mongoose.set("autoIndex", false);
 mongoose.set("autoCreate", false);
 
 import Application from "../models/Application.js";
+import ApprovedApplication from "../models/ApprovedApplication.js";
 import RejectedApplication from "../models/RejectedApplication.js";
 import CibilReport from "../models/CibilReport.js";
 import { normalizePan, partySubjectPan, toCibilSubject } from "../models/cibilSubjectSchemas.js";
@@ -94,13 +96,92 @@ const stats = {
   appsSubjectSkippedNoPan: 0,
   appsListMirrored: 0,
   reportsAttributed: 0,
-  reportsOrphaned: 0,
   reportsAlreadyAttributed: 0,
+  // Orphan recovery (formId + rawRequest.pan_id, both required)
+  reportsRecovered: 0,
+  reportsCoApplicantOrphan: 0,
+  reportsUnrecoverable: 0,
+  recoveredMirrored: 0,
+  recoveredNoSummary: 0,
 };
 
 /** A record "has a report" — the same test every consumer already applies. */
 const hasReport = (cibil) =>
   typeof cibil?.score === "number" || Boolean(String(cibil?.requestId || "").trim());
+
+/* ── Orphan recovery ──────────────────────────────────────────────────────────
+ * A report is "orphaned" when its applicationId matches no document in any of
+ * the three collections. That happens because one of the two approval paths
+ * (workflowController.js updateWorkflowStage) mints a NEW _id for the approved
+ * copy and deletes the source Application, leaving the report pointing at an id
+ * that no longer exists.
+ *
+ * Such a report is recoverable, but ONLY on evidence that already exists in the
+ * data — never on a guess. Two independent facts must both hold:
+ *
+ *   1. `rawResponsePath` embeds the formId (the raw JSON is written to
+ *      uploads/applications/<formId>/cibil/raw-response.json), and that formId
+ *      matches EXACTLY ONE record across all three collections.
+ *   2. `rawRequest.pan_id` — the PAN the bureau pull was actually made against,
+ *      recorded verbatim at request time — equals that record's APPLICANT PAN.
+ *
+ * Fact 2 is what makes this deterministic rather than inferential: the subject
+ * is read from the stored request, not deduced from role, score, date, ordering
+ * or name. Anything that fails either check is skipped and reported.
+ */
+
+/** formId out of `applications/<formId>/cibil/raw-response.json`. "" if absent. */
+export const formIdFromRawResponsePath = (path) => {
+  const m = String(path || "").match(/(?:^|\/)applications\/([^/]+)\//);
+  return m ? m[1].trim() : "";
+};
+
+/** The PAN the bureau pull was made against, as stored on the request. */
+export const subjectPanOfReport = (report) => normalizePan(report?.rawRequest?.pan_id);
+
+/**
+ * decideOrphanRecovery({ report, candidates }) → { action, reason, ... }
+ *
+ * Pure: no database, no I/O. `candidates` is every record whose formId matches
+ * the one embedded in the report's rawResponsePath, across all three
+ * collections. Exported so the decision can be tested without MongoDB.
+ *
+ * action:
+ *   "recover"     — safe: unique formId match AND pan_id === applicant PAN
+ *   "coapplicant" — pan_id is the CO-APPLICANT's; reported, never written
+ *   "skip"        — anything else, with the reason
+ */
+export function decideOrphanRecovery({ report, candidates }) {
+  const formId = formIdFromRawResponsePath(report?.rawResponsePath);
+  if (!formId) return { action: "skip", reason: "no formId in rawResponsePath" };
+
+  const list = Array.isArray(candidates) ? candidates : [];
+  if (list.length === 0) return { action: "skip", reason: `formId ${formId} matches no record`, formId };
+  if (list.length > 1) {
+    return { action: "skip", reason: `formId ${formId} matches ${list.length} records — ambiguous`, formId };
+  }
+
+  const subjectPan = subjectPanOfReport(report);
+  if (!subjectPan) return { action: "skip", reason: "rawRequest.pan_id missing", formId };
+
+  const target = list[0];
+  const applicantPan = partySubjectPan(target.doc?.applicant);
+  const coApplicantPan = partySubjectPan(target.doc?.coApplicant);
+
+  if (applicantPan && subjectPan === applicantPan) {
+    return { action: "recover", formId, subjectPan, target };
+  }
+
+  // The subject is the co-applicant. Real, but not what this recovery covers:
+  // re-pointing such a report is a separate decision about whose record it
+  // belongs on, and there is no production example to validate against
+  // (every stored report was pulled against an applicant). Reported, not acted on.
+  if (coApplicantPan && subjectPan === coApplicantPan) {
+    return { action: "coapplicant", formId, subjectPan, target, reason: "pan_id is the co-applicant's" };
+  }
+
+  return { action: "skip", reason: `pan_id matches neither party on ${formId}`, formId };
+}
 
 /* ── Steps 1 + 2 ─────────────────────────────────────────────────────────── */
 async function attributeApplications(Model, label) {
@@ -160,12 +241,131 @@ async function attributeApplications(Model, label) {
   console.log(`  ${label}: ${scanned} scanned`);
 }
 
+/** Every record carrying this formId, across all three collections. */
+async function findByFormId(formId) {
+  const out = [];
+  for (const [label, Model] of [
+    ["applications", Application],
+    ["approvedApplications", ApprovedApplication],
+    ["rejectedApplications", RejectedApplication],
+  ]) {
+    for await (const doc of Model.collection.find(
+      { formId },
+      { projection: { _id: 1, formId: 1, applicant: 1, coApplicant: 1, cibil: 1, cibilSubjects: 1 } }
+    )) {
+      out.push({ label, Model, doc });
+    }
+  }
+  return out;
+}
+
+/**
+ * Attempt deterministic recovery of one orphaned report.
+ *
+ * WRITE ORDER MATTERS and is fixed: every check passes first, then subjectPan,
+ * then the summary mirror, and only last the applicationId re-point. Doing the
+ * re-point first would destroy the evidence the checks depend on if a later
+ * step failed.
+ *
+ * rawRequest, rawResponse, rawResponsePath, reportUrl, requestId and the score
+ * are never touched.
+ */
+async function recoverOrphan(rep, orphans, coApplicantOrphans) {
+  const formId = formIdFromRawResponsePath(rep.rawResponsePath);
+  const candidates = formId ? await findByFormId(formId) : [];
+  const decision = decideOrphanRecovery({ report: rep, candidates });
+
+  if (decision.action === "coapplicant") {
+    stats.reportsCoApplicantOrphan += 1;
+    coApplicantOrphans.push(`${rep.applicationId} → ${decision.formId} (${decision.reason})`);
+    return;
+  }
+
+  if (decision.action !== "recover") {
+    stats.reportsUnrecoverable += 1;
+    orphans.push(`${rep.applicationId} — ${decision.reason}`);
+    return;
+  }
+
+  const { subjectPan, target } = decision;
+
+  // The obsolete `applicationId_1` unique index is still in place by design, so
+  // re-pointing onto a record that already owns a report would fail with E11000
+  // mid-migration. Check first and skip rather than crash — and this is a real
+  // signal, not just defensiveness: two reports claiming one application means
+  // the data needs a human before anything is rewritten.
+  const occupied = await CibilReport.collection.findOne(
+    { applicationId: target.doc._id, _id: { $ne: rep._id } },
+    { projection: { _id: 1 } }
+  );
+  if (occupied) {
+    stats.reportsUnrecoverable += 1;
+    orphans.push(
+      `${rep.applicationId} — ${decision.formId} already has report ${occupied._id}; not re-pointed`
+    );
+    return;
+  }
+
+  stats.reportsRecovered += 1;
+  console.log(
+    `      recover ${rep.applicationId} → ${decision.formId} ` +
+    `(${target.label} ${target.doc._id}) subject=applicant`
+  );
+
+  if (DRY_RUN) return;
+
+  // 1 · attribute the report to the person it was pulled against
+  await CibilReport.collection.updateOne({ _id: rep._id }, { $set: { subjectPan } });
+
+  // 2 · mirror the summary onto the owning record — only where the schema can
+  //     actually hold it. ApprovedApplication carries no `cibil` block and no
+  //     `cibilSubjects` (see the audit's §6A), so there is no summary to mirror
+  //     and writing one through the native driver would produce a field the
+  //     model strips on read. Reported rather than silently skipped.
+  const ownerCibil = target.doc.cibil;
+  const ownerSupportsList = Boolean(target.Model.schema?.path("cibilSubjects"));
+  if (ownerSupportsList && hasReport(ownerCibil)) {
+    const already = (target.doc.cibilSubjects || []).some(
+      (e) => normalizePan(e?.subjectPan) === subjectPan
+    );
+    if (!already) {
+      await target.Model.collection.updateOne(
+        { _id: target.doc._id },
+        {
+          $set: {
+            "cibil.subjectPan": normalizePan(target.doc.cibil?.subjectPan) || subjectPan,
+            cibilSubjects: [
+              ...(target.doc.cibilSubjects || []),
+              toCibilSubject(subjectPan, { ...ownerCibil, subjectPan }),
+            ],
+          },
+        }
+      );
+      stats.recoveredMirrored += 1;
+    }
+  } else {
+    stats.recoveredNoSummary += 1;
+  }
+
+  // 3 · LAST — re-point the report at the record that exists today.
+  await CibilReport.collection.updateOne(
+    { _id: rep._id },
+    { $set: { applicationId: target.doc._id } }
+  );
+}
+
 /* ── Step 3 ──────────────────────────────────────────────────────────────── */
 async function attributeReports() {
   const coll = CibilReport.collection;
   const orphans = [];
+  const coApplicantOrphans = [];
 
-  for await (const rep of coll.find({}, { projection: { _id: 1, applicationId: 1, subjectPan: 1 } })) {
+  // rawResponsePath and rawRequest.pan_id are the two recovery keys; the bulky
+  // rawResponse blob is deliberately excluded from the projection.
+  const projection = {
+    _id: 1, applicationId: 1, subjectPan: 1, rawResponsePath: 1, "rawRequest.pan_id": 1,
+  };
+  for await (const rep of coll.find({}, { projection })) {
     if (normalizePan(rep.subjectPan)) {
       stats.reportsAlreadyAttributed += 1;
       continue;
@@ -183,21 +383,26 @@ async function attributeReports() {
 
     if (!owner) {
       // The application this report belongs to is gone — the id divergence
-      // documented in the audit (§6B). Not guessable; reported for review.
-      stats.reportsOrphaned += 1;
-      orphans.push(String(rep.applicationId));
+      // documented in the audit (§6B). Try the deterministic formId + pan_id
+      // recovery; anything short of a complete match is skipped, not guessed.
+      await recoverOrphan(rep, orphans, coApplicantOrphans);
       continue;
     }
 
     const subjectPan = normalizePan(owner.cibil?.subjectPan) || partySubjectPan(owner.applicant);
     if (!subjectPan) {
-      stats.reportsOrphaned += 1;
-      orphans.push(`${rep.applicationId} (no PAN on the owning applicant)`);
+      stats.reportsUnrecoverable += 1;
+      orphans.push(`${rep.applicationId} — no PAN on the owning applicant`);
       continue;
     }
 
     stats.reportsAttributed += 1;
     if (!DRY_RUN) await coll.updateOne({ _id: rep._id }, { $set: { subjectPan } });
+  }
+
+  if (coApplicantOrphans.length) {
+    console.log(`\n  ℹ ${coApplicantOrphans.length} orphan(s) belong to the CO-APPLICANT — reported, not modified:`);
+    coApplicantOrphans.slice(0, 20).forEach((o) => console.log(`      ${o}`));
   }
 
   if (orphans.length) {
@@ -272,16 +477,28 @@ async function main() {
   console.log(`cibilSubjects mirrored:          ${stats.appsListMirrored}`);
   console.log(`skipped, no report on record:    ${stats.appsSubjectSkippedNoReport}`);
   console.log(`skipped, applicant has no PAN:   ${stats.appsSubjectSkippedNoPan}`);
-  console.log(`reports attributed:              ${stats.reportsAttributed}`);
+  console.log(`directly attributed:             ${stats.reportsAttributed}`);
   console.log(`reports already attributed:      ${stats.reportsAlreadyAttributed}`);
-  console.log(`reports UNATTRIBUTABLE:          ${stats.reportsOrphaned}`);
+  console.log(`orphan recovered:                ${stats.reportsRecovered}`);
+  console.log(`  …of those, summary mirrored:   ${stats.recoveredMirrored}`);
+  console.log(`  …of those, no summary to hold: ${stats.recoveredNoSummary}`);
+  console.log(`orphan is CO-APPLICANT's:        ${stats.reportsCoApplicantOrphan}  (reported, never written)`);
+  console.log(`unrecoverable:                   ${stats.reportsUnrecoverable}`);
   console.log(`Execution time:                  ${((Date.now() - startedAt) / 1000).toFixed(2)}s`);
 
   await mongoose.disconnect();
 }
 
-main().catch(async (err) => {
-  console.error("FAILED:", err?.message || err);
-  await mongoose.disconnect().catch(() => {});
-  process.exit(1);
-});
+// Run only when invoked directly. Importing this file (the verification script
+// does, to test the pure recovery decision) must never open a connection or
+// touch data — without this guard, `import` would run the whole migration.
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main().catch(async (err) => {
+    console.error("FAILED:", err?.message || err);
+    await mongoose.disconnect().catch(() => {});
+    process.exit(1);
+  });
+}
