@@ -55,6 +55,24 @@
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
+// ── autoIndex OFF ───────────────────────────────────────────────────────────
+// Mongoose builds every index declared on a registered schema when the
+// CONNECTION OPENS — not when the model is imported. So importing the models
+// below is harmless on its own, but the moment connect() runs, CibilReport's
+// compound index would be created. A Phase 2A dry run against production
+// created `applicationId_1_subjectPan_1` exactly that way; it had to be
+// dropped by hand afterwards.
+//
+// These statements execute after the (hoisted) imports but before connect(),
+// which is the point that matters. The same options are repeated on the
+// connection itself below, so the guarantee does not depend on global state.
+// `autoCreate: false` also stops Mongoose creating a missing collection.
+//
+// Result: this script performs NO implicit index or collection work. Every
+// index change stays explicit, inside migrateIndex(), behind --with-index.
+mongoose.set("autoIndex", false);
+mongoose.set("autoCreate", false);
+
 import Application from "../models/Application.js";
 import RejectedApplication from "../models/RejectedApplication.js";
 import CibilReport from "../models/CibilReport.js";
@@ -227,7 +245,9 @@ async function main() {
     process.exit(1);
   }
 
-  await mongoose.connect(process.env.MONGO_URI);
+  // Repeated here so the guarantee holds even if the globals above are ever
+  // removed or overridden by an imported module.
+  await mongoose.connect(process.env.MONGO_URI, { autoIndex: false, autoCreate: false });
   const dbName = mongoose.connection.name;
   const host = mongoose.connection.host;
   console.log(`Connected to database "${dbName}" on ${host}`);
