@@ -11,6 +11,12 @@ import CreditNoteSummary from "../components/CreditNoteSummary";
 import ApplicantSwapCards from "../components/ApplicantSwapCards";
 import DisbursementModal from "../components/DisbursementModal";
 import Toast from "../components/Toast";
+import {
+  subjectSummary,
+  cibilReportPath,
+  canFetchCoApplicantCibil,
+  fetchOutcome,
+} from "../utils/cibilSubjects";
 import { usePendingInvalidate } from "../hooks/useApplications";
 import {
   WORKFLOW_STAGES,
@@ -58,6 +64,10 @@ export default function ApplicationView() {
   const [toast, setToast] = useState(null);
   const [cibilJson, setCibilJson] = useState(null);
   const [cibilBusy, setCibilBusy] = useState("");
+  // Co-applicant CIBIL fetch: confirmation gate + single-flight guard, because
+  // the request is billable and must not be issued twice by a double-click.
+  const [showCoFetchConfirm, setShowCoFetchConfirm] = useState(false);
+  const [coFetchBusy, setCoFetchBusy] = useState(false);
 
   /**
    * Return the admin to the Pending list they came from.
@@ -94,8 +104,14 @@ export default function ApplicationView() {
   // ── CIBIL: stored JSON is the source of truth; PDFs are generated on
   //    demand by the backend and never stored. All four calls reuse the
   //    existing admin auth via the shared api instance.
-  const cibilFetch = async (path, responseType) =>
-    api.get(`/cibil/${app._id}${path}`, responseType ? { responseType } : undefined);
+  // `subjectPan` scopes the read to one person's report. Omitted only for a
+  // legacy applicant whose PAN cannot be resolved, where the subject-blind
+  // call is still correct and is what shipped before.
+  const cibilFetch = async (path, responseType, subjectPan) =>
+    api.get(
+      cibilReportPath(app._id, path, subjectPan),
+      responseType ? { responseType } : undefined
+    );
 
   const saveBlob = (blob, filename) => {
     const url = window.URL.createObjectURL(blob);
@@ -113,41 +129,80 @@ export default function ApplicationView() {
       ? "CIBIL data not available."
       : `Failed: ${err?.response?.data?.message || err?.message || "unknown error"}`);
 
-  const handleViewJson = async () => {
+  // Each handler takes the subject whose report is being read, so the
+  // co-applicant's buttons can never resolve through an applicationId-only
+  // query and land on the applicant's file.
+  const handleViewJson = async (subjectPan) => {
     setCibilBusy("viewJson");
-    try { setCibilJson((await cibilFetch("/json")).data); }
+    try { setCibilJson((await cibilFetch("/json", undefined, subjectPan)).data); }
     catch (err) { cibilError(err); }
     finally { setCibilBusy(""); }
   };
 
-  const handleDownloadJson = async () => {
+  const handleDownloadJson = async (subjectPan) => {
     setCibilBusy("dlJson");
     try {
-      const { data } = await cibilFetch("/json");
+      const { data } = await cibilFetch("/json", undefined, subjectPan);
       saveBlob(new Blob([JSON.stringify(data.rawResponse, null, 2)], { type: "application/json" }),
                `${app.formId || app._id}-cibil.json`);
     } catch (err) { cibilError(err); }
     finally { setCibilBusy(""); }
   };
 
-  const handleViewPdf = async () => {
+  const handleViewPdf = async (subjectPan) => {
     setCibilBusy("viewPdf");
     try {
-      const res = await cibilFetch("/pdf", "blob");
+      const res = await cibilFetch("/pdf", "blob", subjectPan);
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) { cibilError(err); }
     finally { setCibilBusy(""); }
   };
 
-  const handleDownloadPdf = async () => {
+  const handleDownloadPdf = async (subjectPan) => {
     setCibilBusy("dlPdf");
     try {
-      const res = await cibilFetch("/pdf/download", "blob");
+      const res = await cibilFetch("/pdf/download", "blob", subjectPan);
+      // Filename intentionally unchanged in this phase. Two subjects on one
+      // application therefore produce the same name; noted, not fixed here.
       saveBlob(new Blob([res.data], { type: "application/pdf" }),
                `${app.formId || app._id}-CIBIL-Report.pdf`);
     } catch (err) { cibilError(err); }
     finally { setCibilBusy(""); }
+  };
+
+  // ── Co-applicant CIBIL fetch — the one billable action in this page ──────
+  // Guarded by a confirmation, single-flight, and never retried automatically.
+  const handleCoApplicantFetch = async () => {
+    if (coFetchBusy) return;              // belt: state also disables the button
+    setShowCoFetchConfirm(false);
+    setCoFetchBusy(true);
+    try {
+      const { data } = await api.post(`/cibil/${app._id}/co-applicant/fetch`);
+      const outcome = fetchOutcome(data);
+      if (outcome) {
+        setToast({ type: outcome.ok ? "success" : "error", msg: outcome.message });
+        if (outcome.refresh) await refreshApplication();
+      } else {
+        setToast({ type: "success", msg: "Co-Applicant CIBIL request completed." });
+        await refreshApplication();
+      }
+    } catch (err) {
+      // Every documented failure carries a `status` the backend defined; map it
+      // to its own message rather than one generic alert. Unrecognised shapes
+      // fall through to the page's existing error text. No automatic retry.
+      const outcome = fetchOutcome(err?.response?.data);
+      setToast({
+        type: "error",
+        msg:
+          outcome?.message ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Co-Applicant CIBIL request failed.",
+      });
+    } finally {
+      setCoFetchBusy(false);
+    }
   };
 
   // ================== Update / Approve ==================
@@ -421,25 +476,28 @@ export default function ApplicationView() {
   const applicantName = fullName(applicantData) || "Applicant";
 
   /**
-   * Whose bureau report is stored?
+   * Whose bureau report is whose?
    *
-   * There is ONE report per application, pulled against one person's PAN.
-   * `cibil.subjectPan` records whose it is; records that predate the swap
-   * feature carry no subject, which meant "the applicant" at the time. This is
-   * the same rule ApplicantSwapCards uses, so the cards and these sections can
-   * never disagree about who owns the score.
+   * An application can now hold one report per person, keyed by subjectPan, so
+   * each section resolves its OWN summary rather than sharing `app.cibil`.
+   * Matching is by normalised PAN only — never by name, role, ordering or
+   * array position — which is the same rule the backend and ApplicantSwapCards
+   * apply, so they cannot disagree about who owns a score.
+   *
+   * Records predating cibilSubjects still work: an unattributed `app.cibil` is
+   * the applicant's, and a co-applicant can never claim it.
    */
-  const cibilPanOf = (party) => {
-    const p = party?.applicant || party || {};
-    return String(p.panNo || p.pan || "").trim().toUpperCase();
-  };
-  const cibilSubjectPan = String(app?.cibil?.subjectPan || "").trim().toUpperCase();
-  const cibilHasReport =
-    typeof app?.cibil?.score === "number" || Boolean(app?.cibil?.requestId);
-  const cibilBelongsTo = (party, isApplicant) => {
-    if (!cibilHasReport) return false;
-    return cibilSubjectPan ? cibilPanOf(party) === cibilSubjectPan : isApplicant;
-  };
+  const applicantCibil = subjectSummary(app, app?.applicant, true);
+  const coApplicantCibil = subjectSummary(app, app?.coApplicant, false);
+
+  // Whether the co-applicant's Fetch CIBIL action may be offered. UX only —
+  // the backend's requireSuperAdmin remains the authority.
+  const coApplicantFetch = canFetchCoApplicantCibil({
+    isSuperAdmin: admin?.role === "superadmin",
+    coApplicant: app?.coApplicant,
+    coApplicantSummary: coApplicantCibil.summary,
+    busy: coFetchBusy,
+  });
 
   // Approval is gated only by checklist items the backend already enforces
   // (see utils/approvalChecklist.js — `blocking`). Reject is never gated.
@@ -695,8 +753,9 @@ export default function ApplicationView() {
           {/* ──── Applicant CIBIL ──── */}
           <CibilBlock
             title="Applicant CIBIL"
-            cibil={app?.cibil}
-            available={cibilBelongsTo(app?.applicant, true)}
+            cibil={applicantCibil.summary}
+            available={applicantCibil.available}
+            subjectPan={applicantCibil.subjectPan}
             busy={cibilBusy}
             onViewJson={handleViewJson}
             onDownloadJson={handleDownloadJson}
@@ -787,13 +846,17 @@ export default function ApplicationView() {
           {/* ──── Co-Applicant CIBIL ──── */}
           <CibilBlock
             title="Co-Applicant CIBIL"
-            cibil={app?.cibil}
-            available={cibilBelongsTo(app?.coApplicant, false)}
+            cibil={coApplicantCibil.summary}
+            available={coApplicantCibil.available}
+            subjectPan={coApplicantCibil.subjectPan}
             busy={cibilBusy}
             onViewJson={handleViewJson}
             onDownloadJson={handleDownloadJson}
             onViewPdf={handleViewPdf}
             onDownloadPdf={handleDownloadPdf}
+            canFetch={coApplicantFetch.show}
+            fetchBusy={coFetchBusy}
+            onFetch={() => setShowCoFetchConfirm(true)}
           />
 
           {/* ──── Vehicle Details ──── */}
@@ -1034,6 +1097,65 @@ export default function ApplicationView() {
       )}
 
       {/* Cancel leaves the application exactly where it was. */}
+      {/* Co-applicant CIBIL confirmation. A bureau pull is billable and cannot
+          be undone, so the cost is stated plainly before the request is made.
+          Uses the page's existing overlay/modal pattern rather than confirm(). */}
+      {showCoFetchConfirm && (
+        <div style={S.cnOverlay} onClick={() => setShowCoFetchConfirm(false)}>
+          <div
+            style={{ ...S.cnModal, maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="co-cibil-confirm-title"
+          >
+            <div style={S.cnHeader}>
+              <h2 style={S.cnTitle} id="co-cibil-confirm-title">Fetch Co-Applicant CIBIL?</h2>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setShowCoFetchConfirm(false)}
+                style={S.cnClose}
+              >
+                ×
+              </button>
+            </div>
+            <div style={S.cnBody}>
+              <p style={{ margin: "0 0 10px", lineHeight: 1.55 }}>
+                This will request a new CIBIL report for the <b>co-applicant</b> on{" "}
+                <b>{app?.formId || app?._id}</b>.
+              </p>
+              <p style={{ margin: "0 0 10px", lineHeight: 1.55, color: "#B45309", fontWeight: 600 }}>
+                A bureau request may incur a CIBIL/vendor charge. Only perform it when
+                the co-applicant's credit report is actually required.
+              </p>
+              <p style={{ margin: 0, lineHeight: 1.55, color: "#6B7280", fontSize: 13.5 }}>
+                The applicant's existing report is not affected, and the application's
+                status, stage and eligibility are unchanged.
+              </p>
+              <div style={S.cnActions}>
+                <button
+                  type="button"
+                  style={S.cibilBtn}
+                  onClick={() => setShowCoFetchConfirm(false)}
+                  disabled={coFetchBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  style={{ ...S.cibilBtnPrimary, ...S.cibilBtnFetch }}
+                  onClick={handleCoApplicantFetch}
+                  disabled={coFetchBusy}
+                >
+                  {coFetchBusy ? "Fetching…" : "Yes, fetch CIBIL"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DisbursementModal
         open={Boolean(disbursing)}
         formId={app?.formId}
@@ -1066,7 +1188,11 @@ function fmtDisbursementDate(v) {
    Lifted verbatim from the single CIBIL section it replaces: same meter, same
    field pairs, same buttons, same styles. The only difference between the two
    instances is whose data it is handed. */
-function CibilBlock({ title, cibil, available, busy, onViewJson, onDownloadJson, onViewPdf, onDownloadPdf }) {
+function CibilBlock({
+  title, cibil, available, busy, subjectPan,
+  onViewJson, onDownloadJson, onViewPdf, onDownloadPdf,
+  canFetch = false, fetchBusy = false, onFetch,
+}) {
   const c = available ? cibil || {} : {};
   const hasScore = typeof c.score === "number" && !Number.isNaN(c.score);
   const clamped = hasScore ? Math.max(300, Math.min(900, c.score)) : 0;
@@ -1123,18 +1249,35 @@ function CibilBlock({ title, cibil, available, busy, onViewJson, onDownloadJson,
           With no report for this person there is nothing to fetch, so the
           actions are disabled rather than left to fail on a 404. */}
       <div style={S.cibilActions}>
-        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={onViewJson}>
+        {/* Each read is scoped to THIS section's subject, so the co-applicant's
+            buttons can never resolve to the applicant's report. */}
+        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={() => onViewJson(subjectPan)}>
           {busy === "viewJson" ? "Loading…" : "View JSON"}
         </button>
-        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={onDownloadJson}>
+        <button style={S.cibilBtn} disabled={!available || !!busy} onClick={() => onDownloadJson(subjectPan)}>
           {busy === "dlJson" ? "Preparing…" : "Download JSON"}
         </button>
-        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={onViewPdf}>
+        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={() => onViewPdf(subjectPan)}>
           {busy === "viewPdf" ? "Generating…" : "View PDF"}
         </button>
-        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={onDownloadPdf}>
+        <button style={S.cibilBtnPrimary} disabled={!available || !!busy} onClick={() => onDownloadPdf(subjectPan)}>
           {busy === "dlPdf" ? "Generating…" : "Download PDF"}
         </button>
+
+        {/* Fetch CIBIL — offered only when a report can actually be obtained
+            for this person and the user is a Super Admin. Billable, so it is
+            visually separated from the read actions and opens a confirmation
+            rather than firing on click. */}
+        {canFetch ? (
+          <button
+            style={{ ...S.cibilBtnPrimary, ...S.cibilBtnFetch, ...(fetchBusy ? S.cibilBtnBusy : null) }}
+            disabled={fetchBusy}
+            onClick={onFetch}
+            title="Requests a new CIBIL report for the co-applicant. This may incur a vendor charge."
+          >
+            {fetchBusy ? "Fetching…" : "Fetch CIBIL"}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -1342,6 +1485,16 @@ const S = {
   cibilBtnPrimary: {
     padding: "7px 14px", borderRadius: 8, border: "1px solid #2563eb",
     background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
+  },
+  // Fetch CIBIL is the only billable action in this page, so it is amber
+  // rather than the blue used by the read actions, and set apart from them.
+  cibilBtnFetch: {
+    border: "1px solid #B45309", background: "#B45309", marginLeft: "auto",
+  },
+  cibilBtnBusy: { opacity: 0.7, cursor: "progress" },
+  // Modal footer: same spacing as the page's other dialog actions.
+  cnActions: {
+    display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18,
   },
   jsonPre: {
     margin: 0, color: "#e2e8f0", fontSize: 11.5, lineHeight: 1.5,
