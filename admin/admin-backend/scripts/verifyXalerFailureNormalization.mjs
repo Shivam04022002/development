@@ -35,7 +35,15 @@ const check = (name, fn) => {
   }
 };
 
-/** The shape production actually returned, minus the identity fields. */
+/**
+ * The shape production actually returned, minus the identity fields.
+ *
+ * `retryable: true` is the REAL value, confirmed from the 2026-08-11 12:22 and
+ * 12:37 production calls. An earlier version of this fixture guessed `false`
+ * from a log line that printed only the payload's key names, and that guess is
+ * what let the precedence bug ship: the vendor means "a corrected request may
+ * be tried", while this module asks "may this identical request be resent?".
+ */
 const NO_RECORD_400 = {
   status: "error",
   error_code: "NO_CREDIT_RECORD",
@@ -43,7 +51,7 @@ const NO_RECORD_400 = {
     "TransUnion CIBIL has no credit record matching the identity details supplied, " +
     "so no score or report could be generated.",
   what_to_do_next: "Confirm the PAN and date of birth, or proceed without a bureau score.",
-  retryable: false,
+  retryable: true,
   fallback_used: true,
   match_strength: "none",
 };
@@ -103,17 +111,25 @@ check("no credential-shaped content survives", () => {
 
 console.log("\nretry classification");
 
-check("explicit vendor retryable:false → not_retryable (the production case)", () => {
+check("the production case → not_retryable despite the vendor's retryable:true", () => {
+  // The exact payload that cost two extra paid calls before the precedence fix.
+  assert.equal(NO_RECORD_400.retryable, true, "fixture must carry the real vendor value");
   assert.equal(classifyRetryability({ data: NO_RECORD_400, httpStatus: 400 }), "not_retryable");
 });
 
-check("explicit vendor retryable:true → retryable", () => {
-  assert.equal(classifyRetryability({ data: { retryable: true }, httpStatus: 400 }), "retryable");
+check("HTTP 400 outranks the vendor's boolean, in both directions", () => {
+  assert.equal(classifyRetryability({ data: { retryable: true }, httpStatus: 400 }), "not_retryable");
+  assert.equal(classifyRetryability({ data: { retryable: false }, httpStatus: 400 }), "not_retryable");
 });
 
-check("the vendor's boolean outranks the HTTP heuristic", () => {
-  assert.equal(classifyRetryability({ data: { retryable: true }, httpStatus: 400 }), "retryable");
+check("explicit vendor retryable:true → retryable away from 400", () => {
+  assert.equal(classifyRetryability({ data: { retryable: true }, httpStatus: 503 }), "retryable");
+  assert.equal(classifyRetryability({ data: { retryable: true } }), "retryable");
+});
+
+check("the vendor's boolean still outranks the 5xx heuristic", () => {
   assert.equal(classifyRetryability({ data: { retryable: false }, httpStatus: 503 }), "not_retryable");
+  assert.equal(classifyRetryability({ data: { retryable: false }, httpStatus: 429 }), "not_retryable");
 });
 
 check("transport faults are retryable", () => {

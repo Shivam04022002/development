@@ -34,6 +34,7 @@ import {
   consentStatus,
   STALE_RESERVATION_MS,
 } from "../services/coApplicantCibilService.js";
+import { classifyRetryability } from "../services/xalerCibilService.js";
 
 let passed = 0;
 const acheck = async (name, fn) => {
@@ -294,13 +295,25 @@ await acheck("a vendor that throws is contained and releases the reservation", a
 
 console.log("\nvendor failure classification (Phase 2B.6)");
 
-// The exact production case: HTTP 400, no bureau record, vendor says not retryable.
+// The exact production case: HTTP 400, no bureau record — and note the vendor
+// itself says `retryable: true`, meaning "a corrected request may be tried".
+//
+// `retryability` is DERIVED by the real classifier rather than hardcoded. When
+// it was hardcoded, this suite and verifyXalerFailureNormalization agreed on a
+// value neither had taken from a real payload, and the precedence bug shipped
+// with both green. Deriving it here means the two can no longer drift apart.
+const NO_RECORD_PAYLOAD = { status: "error", error_code: "NO_CREDIT_RECORD", retryable: true };
 const NO_RECORD = {
   ok: false,
   invalid: true,
   reason: "TransUnion CIBIL has no credit record matching the identity details supplied.",
-  retryability: "not_retryable",
+  retryability: classifyRetryability({ data: NO_RECORD_PAYLOAD, httpStatus: 400 }),
 };
+
+await acheck("the classifier derives not_retryable from the real 400 payload", () => {
+  assert.equal(NO_RECORD.retryability, "not_retryable",
+    "HTTP 400 must outrank the vendor's retryable:true");
+});
 
 await acheck("no-record failure → status not_retryable, reservation released", async () => {
   const reports = fakeReports();

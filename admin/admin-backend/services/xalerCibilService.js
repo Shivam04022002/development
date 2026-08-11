@@ -298,19 +298,37 @@ export function vendorFailureReason(data, httpStatus, fallback) {
  *   "not_retryable" deterministic — the same request will fail the same way
  *   "unknown"       insufficient evidence; the caller must not assume either
  *
- * The vendor's own boolean is preferred when it actually sends one. Otherwise
- * this falls back to the rule the retry loop already applies: 5xx/429 are
- * retried, a 400 is not, because "the request is wrong, so retrying it
- * unchanged cannot help". No vendor-specific condition is invented, and no
- * free-text message is pattern-matched.
+ * Precedence: transport, then HTTP 400, then the vendor's own boolean, then
+ * 5xx/429. No vendor-specific condition is invented, and no free-text message
+ * is pattern-matched.
+ *
+ * A 400 is settled BEFORE the vendor boolean is consulted, because the two are
+ * answering different questions. Production, 2026-08-11: Xaler's no-credit-
+ * record rejection arrives as HTTP 400 with `retryable: true` beside a
+ * `what_to_do_next` telling the operator to correct the PAN or date of birth —
+ * i.e. "a CORRECTED request may be tried", not "this identical request may
+ * succeed". Trusting that flag here classified a deterministic rejection as
+ * retryable and cost two further paid calls.
  */
 export function classifyRetryability({ data, httpStatus, transport = false } = {}) {
   if (transport) return "retryable";
-  if (typeof data?.retryable === "boolean") return data.retryable ? "retryable" : "not_retryable";
-  if (typeof httpStatus === "number") {
-    if (httpStatus >= 500 || httpStatus === 429) return "retryable";
-    if (httpStatus === 400) return "not_retryable";
+
+  // A 400 means the exact request was rejected, so re-sending it unchanged
+  // cannot help — whatever the vendor's flag says about a corrected one.
+  if (httpStatus === 400) return "not_retryable";
+
+  // Elsewhere the vendor's explicit boolean is the best evidence available.
+  if (typeof data?.retryable === "boolean") {
+    return data.retryable ? "retryable" : "not_retryable";
   }
+
+  if (
+    typeof httpStatus === "number" &&
+    (httpStatus >= 500 || httpStatus === 429)
+  ) {
+    return "retryable";
+  }
+
   return "unknown";
 }
 
