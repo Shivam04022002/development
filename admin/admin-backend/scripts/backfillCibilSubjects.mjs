@@ -183,6 +183,30 @@ export function decideOrphanRecovery({ report, candidates }) {
   return { action: "skip", reason: `pan_id matches neither party on ${formId}`, formId };
 }
 
+/**
+ * What the summary mirror WOULD do for a recovered orphan.
+ *
+ * Pure, and deliberately separate from the write: it reads only data already
+ * in memory (the owning document and its model's schema), so --dry-run can
+ * report the outcome without performing — or even preparing — a write.
+ *
+ *   "mirror"  — the owner's schema holds cibilSubjects and there is a summary
+ *               to copy, and this subject is not listed yet
+ *   "already" — this subject is already in the list; a re-run must not append
+ *               a second entry (idempotency)
+ *   "none"    — nothing to mirror. ApprovedApplication carries no `cibil` block
+ *               and no `cibilSubjects` (audit §6A), so for an orphan recovered
+ *               onto an approved record there is no summary in existence and
+ *               nowhere to put one. Writing through the native driver would
+ *               create a field the model strips on read.
+ */
+export function classifyOrphanMirror({ supportsList, ownerCibil, existingSubjects, subjectPan }) {
+  if (!supportsList || !hasReport(ownerCibil)) return "none";
+  const want = normalizePan(subjectPan);
+  const already = (existingSubjects || []).some((e) => normalizePan(e?.subjectPan) === want);
+  return already ? "already" : "mirror";
+}
+
 /* ── Steps 1 + 2 ─────────────────────────────────────────────────────────── */
 async function attributeApplications(Model, label) {
   const coll = Model.collection;
@@ -307,9 +331,24 @@ async function recoverOrphan(rep, orphans, coApplicantOrphans) {
   }
 
   stats.reportsRecovered += 1;
+
+  // Classify the mirror BEFORE the write guard, from data already in memory,
+  // so a dry run reports exactly what an apply run would encounter. No query
+  // is added and nothing is written here.
+  const ownerCibil = target.doc.cibil;
+  const mirrorAction = classifyOrphanMirror({
+    supportsList: Boolean(target.Model.schema?.path("cibilSubjects")),
+    ownerCibil,
+    existingSubjects: target.doc.cibilSubjects,
+    subjectPan,
+  });
+  if (mirrorAction === "mirror") stats.recoveredMirrored += 1;
+  else if (mirrorAction === "none") stats.recoveredNoSummary += 1;
+  // "already" counts as neither — the entry exists, so a re-run is a no-op.
+
   console.log(
     `      recover ${rep.applicationId} → ${decision.formId} ` +
-    `(${target.label} ${target.doc._id}) subject=applicant`
+    `(${target.label} ${target.doc._id}) subject=applicant, summary=${mirrorAction}`
   );
 
   if (DRY_RUN) return;
@@ -317,34 +356,21 @@ async function recoverOrphan(rep, orphans, coApplicantOrphans) {
   // 1 · attribute the report to the person it was pulled against
   await CibilReport.collection.updateOne({ _id: rep._id }, { $set: { subjectPan } });
 
-  // 2 · mirror the summary onto the owning record — only where the schema can
-  //     actually hold it. ApprovedApplication carries no `cibil` block and no
-  //     `cibilSubjects` (see the audit's §6A), so there is no summary to mirror
-  //     and writing one through the native driver would produce a field the
-  //     model strips on read. Reported rather than silently skipped.
-  const ownerCibil = target.doc.cibil;
-  const ownerSupportsList = Boolean(target.Model.schema?.path("cibilSubjects"));
-  if (ownerSupportsList && hasReport(ownerCibil)) {
-    const already = (target.doc.cibilSubjects || []).some(
-      (e) => normalizePan(e?.subjectPan) === subjectPan
+  // 2 · mirror the summary onto the owning record, if the classification above
+  //     said there is one to mirror and somewhere to put it.
+  if (mirrorAction === "mirror") {
+    await target.Model.collection.updateOne(
+      { _id: target.doc._id },
+      {
+        $set: {
+          "cibil.subjectPan": normalizePan(target.doc.cibil?.subjectPan) || subjectPan,
+          cibilSubjects: [
+            ...(target.doc.cibilSubjects || []),
+            toCibilSubject(subjectPan, { ...ownerCibil, subjectPan }),
+          ],
+        },
+      }
     );
-    if (!already) {
-      await target.Model.collection.updateOne(
-        { _id: target.doc._id },
-        {
-          $set: {
-            "cibil.subjectPan": normalizePan(target.doc.cibil?.subjectPan) || subjectPan,
-            cibilSubjects: [
-              ...(target.doc.cibilSubjects || []),
-              toCibilSubject(subjectPan, { ...ownerCibil, subjectPan }),
-            ],
-          },
-        }
-      );
-      stats.recoveredMirrored += 1;
-    }
-  } else {
-    stats.recoveredNoSummary += 1;
   }
 
   // 3 · LAST — re-point the report at the record that exists today.

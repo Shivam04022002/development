@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import mongoose from "mongoose";
 
 import {
+  classifyOrphanMirror,
   decideOrphanRecovery,
   formIdFromRawResponsePath,
   subjectPanOfReport,
@@ -192,6 +193,110 @@ check("decision performs no mutation of its inputs", () => {
 check("repeated calls return the same decision", () => {
   const args = { report: report(), candidates: [candidate()] };
   assert.deepEqual(decideOrphanRecovery(args).action, decideOrphanRecovery(args).action);
+});
+
+// Summary-mirror capability — classified before the write guard so --dry-run
+// can report it. Must be decidable with no database and no write.
+console.log("\nsummary-mirror classification (dry-run reporting)");
+
+const withSummary = { score: 774, requestId: "tu_1" };
+
+check("ApprovedApplication (no cibilSubjects path) → 'none'", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: false,
+      ownerCibil: withSummary,
+      existingSubjects: undefined,
+      subjectPan: APPLICANT_PAN,
+    }),
+    "none"
+  )
+);
+
+check("schema supports the list but the record has no summary → 'none'", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: true,
+      ownerCibil: {},
+      existingSubjects: [],
+      subjectPan: APPLICANT_PAN,
+    }),
+    "none"
+  )
+);
+
+check("Application with a summary and no entry yet → 'mirror'", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: true,
+      ownerCibil: withSummary,
+      existingSubjects: [],
+      subjectPan: APPLICANT_PAN,
+    }),
+    "mirror"
+  )
+);
+
+check("subject already listed → 'already' (idempotent re-run)", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: true,
+      ownerCibil: withSummary,
+      existingSubjects: [{ subjectPan: APPLICANT_PAN }],
+      subjectPan: APPLICANT_PAN,
+    }),
+    "already"
+  )
+);
+
+check("'already' matching is PAN-normalised, not literal", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: true,
+      ownerCibil: withSummary,
+      existingSubjects: [{ subjectPan: " abcde1234f " }],
+      subjectPan: APPLICANT_PAN,
+    }),
+    "already"
+  )
+);
+
+check("a different subject in the list still mirrors", () =>
+  assert.equal(
+    classifyOrphanMirror({
+      supportsList: true,
+      ownerCibil: withSummary,
+      existingSubjects: [{ subjectPan: COAPP_PAN }],
+      subjectPan: APPLICANT_PAN,
+    }),
+    "mirror"
+  )
+);
+
+check("classification mutates nothing and is stable", () => {
+  const args = {
+    supportsList: true,
+    ownerCibil: withSummary,
+    existingSubjects: [{ subjectPan: COAPP_PAN }],
+    subjectPan: APPLICANT_PAN,
+  };
+  const before = JSON.stringify(args);
+  const a = classifyOrphanMirror(args);
+  const b = classifyOrphanMirror(args);
+  assert.equal(JSON.stringify(args), before);
+  assert.equal(a, b);
+});
+
+check("the production case: both orphans are approvedApplications → 'none' ×2", () => {
+  const both = ["FORM-662921", "FORM-094888"].map(() =>
+    classifyOrphanMirror({
+      supportsList: false, // ApprovedApplication declares no cibilSubjects
+      ownerCibil: undefined, // …and carries no cibil block either
+      existingSubjects: undefined,
+      subjectPan: APPLICANT_PAN,
+    })
+  );
+  assert.deepEqual(both, ["none", "none"]);
 });
 
 // 11 · importing the migration must not enable automatic index creation
