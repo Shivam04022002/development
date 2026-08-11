@@ -20,8 +20,14 @@ export const getPendingFiles = async (req, res) => {
 // Get a single pending file by ID (with ownership check)
 export const getPendingFileById = async (req, res) => {
   try {
+    // .lean() — this model declares a narrow subset of the shared `applications`
+    // collection, so a hydrated read drops everything the Admin Backend owns:
+    // `cibil` (score, state, subjectPan) and the applicant / co-applicant fields
+    // beyond name, email, phone and pan. The detail screen renders those, so it
+    // needs the stored document as it is, exactly like the by-formid read.
     const file = await PendingFiles.findById(req.params.id)
-      .populate("user", "name email");
+      .populate("user", "name email")
+      .lean();
 
     if (!file) {
       return res.status(404).json({ message: "File not found" });

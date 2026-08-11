@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Navbar from '../components/Navbar';
+import SectionTabs, { APPLICATION_TABS } from '../components/SectionTabs';
 import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,13 +19,58 @@ import { API_BASE } from '../config';
 
 const API_BASE_URL = `${API_BASE}/api`; //  mobile backend base
 
+// A party (applicant or co-applicant) may use the legacy nested shape, where
+// the real person sits one level down. Resolve once so callers read plain
+// fields.
+const resolveParty = (party) => party?.applicant || party || {};
+
+// Nothing absent may reach the screen as "undefined", "null" or "Invalid Date";
+// the em dash is what this screen already shows for a missing value.
+const text = (value) => {
+  const str = value === null || value === undefined ? '' : String(value).trim();
+  return str || '—';
+};
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+};
+
+// Same rupee formatting the screen already used for Loan Amount.
+const formatAmount = (raw) => {
+  if (raw === null || raw === undefined || raw === '') return '—';
+  const n = Number(raw);
+  return Number.isFinite(n) ? `₹${n.toLocaleString()}` : String(raw);
+};
+
+const hasParty = (party) =>
+  Object.values(resolveParty(party)).some(
+    (v) => v !== null && v !== undefined && String(v).trim() !== ''
+  );
+
+// The same four personal fields, rendered identically for either role.
+function PersonDetails({ party }) {
+  const person = resolveParty(party);
+  return (
+    <>
+      <Detail label="Full Name" value={text(person.name)} />
+      <Detail label="Father's Name" value={text(person.fatherName)} />
+      <Detail label="DOB" value={formatDate(person.dateOfBirth)} />
+      <Detail label="Aadhaar No." value={text(person.aadharNo)} />
+    </>
+  );
+}
+
 export default function ViewApprovedApplicationScreen({ route, navigation }) {
   const fileId = route?.params?.id || route?.params?.file?._id;
 
   const [user, setUser] = useState(null);
   const [application, setApplication] = useState(route?.params?.file || null);
-  const [activeTab, setActiveTab] = useState('personal');
   const [loading, setLoading] = useState(!application);
+
+  // Which of Applicant / Co-Applicant / Loan Details is on screen.
+  const [activeTab, setActiveTab] = useState('applicant');
 
   useEffect(() => {
     const run = async () => {
@@ -65,42 +111,42 @@ export default function ViewApprovedApplicationScreen({ route, navigation }) {
   }, [fileId]);
 
   // ---------- field mappers ----------
-  const fullName = useMemo(
+  // Whoever currently holds each role on the persisted record, so a swap done
+  // in Admin is reflected without any extra work here.
+  const applicantParty = application?.applicant;
+  const coApplicantParty = application?.coApplicant;
+  const hasCoApplicant = useMemo(() => hasParty(coApplicantParty), [coApplicantParty]);
+
+  // Disbursement details, captured by Admin when the application was approved
+  // and carried onto the approved record. Absent on records approved before
+  // that step existed.
+  const disbursement = application?.disbursement;
+
+  const loanNumber = text(disbursement?.loanNumber);
+  const approvedAmount = formatAmount(disbursement?.approvedAmount);
+  const disbursementDate = formatDate(disbursement?.disbursementDate);
+
+  const loanAmount = useMemo(
     () =>
-      application?.applicant?.applicant?.name ||
-      application?.applicant?.name ||
-      '—',
+      formatAmount(
+        application?.vehicleDetails?.financeRequired ?? application?.loanAmount ?? null
+      ),
     [application]
   );
 
-  const fatherName = useMemo(
-    () =>
-      application?.applicant?.applicant?.fatherName ||
-      application?.applicant?.fatherName ||
-      '—',
-    [application]
-  );
-
-  const coApplicantName = useMemo(
-    () =>
-      application?.coApplicant?.name ||
-      application?.applicant?.coApplicantName ||
-      '—',
-    [application]
-  );
-
-  const loanAmount = useMemo(() => {
-    const raw =
-      application?.vehicleDetails?.financeRequired ??
-      application?.loanAmount ??
-      null;
-    if (raw === null || raw === undefined || raw === '') return '—';
-    const n = Number(raw);
-    return Number.isFinite(n) ? `₹${n.toLocaleString()}` : String(raw);
+  // Stored as a plain month count; "months" is the unit the rest of the app
+  // prints. A value that already carries the unit is left alone.
+  const tenure = useMemo(() => {
+    const raw = text(application?.vehicleDetails?.tenure);
+    if (raw === '—' || /month/i.test(raw)) return raw;
+    return `${raw} months`;
   }, [application]);
 
-  const tenure = application?.vehicleDetails?.tenure || '—';
-  const vehicle = application?.vehicleDetails?.modelName || '—';
+  const vehicle = text(
+    [application?.vehicleDetails?.brandName, application?.vehicleDetails?.modelName]
+      .filter(Boolean)
+      .join(' ')
+  );
 
   const approvedOn =
     application?.approvedAt
@@ -155,41 +201,46 @@ export default function ViewApprovedApplicationScreen({ route, navigation }) {
           <Text style={styles.approvedOn}>Application Approved on {approvedOn}</Text>
         </View>
 
-        {/* Tabs */}
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'personal' && styles.tabActive]}
-            onPress={() => setActiveTab('personal')}
-          >
-            <Text style={[styles.tabText, activeTab === 'personal' && styles.tabTextActive]}>
-              Personal Details
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'loan' && styles.tabActive]}
-            onPress={() => setActiveTab('loan')}
-          >
-            <Text style={[styles.tabText, activeTab === 'loan' && styles.tabTextActive]}>
-              Loan Details
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Tabs — the same strip ViewLoanApplicationScreen uses. This screen's
+            scroll container already pads 15, so the row drops its own margin. */}
+        <SectionTabs
+          tabs={APPLICATION_TABS}
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          style={styles.tabRow}
+        />
 
-        {/* Content */}
+        {/* One section at a time, chosen by the tab above. Applicant and
+            Co-Applicant are the roles as they are persisted right now, so an
+            Admin-side swap is reflected without any extra work here. */}
         <View style={styles.card}>
-          {activeTab === 'personal' ? (
+          {activeTab === 'applicant' && (
             <>
-              <Text style={styles.cardTitle}>Personal Details</Text>
-              <Detail label="Full Name" value={fullName} />
-              <Detail label="Father Name" value={fatherName} />
-              <Detail label="Co-Applicant" value={coApplicantName} />
+              <Text style={styles.cardTitle}>Applicant Details</Text>
+              <PersonDetails party={applicantParty} />
             </>
-          ) : (
+          )}
+
+          {activeTab === 'coApplicant' && (
+            <>
+              <Text style={styles.cardTitle}>Co-Applicant Details</Text>
+              {hasCoApplicant ? (
+                <PersonDetails party={coApplicantParty} />
+              ) : (
+                <Text style={styles.emptyState}>No Co-Applicant</Text>
+              )}
+            </>
+          )}
+
+          {activeTab === 'loanDetails' && (
             <>
               <Text style={styles.cardTitle}>Loan Details</Text>
+              <Detail label="Loan Number" value={loanNumber} />
               <Detail label="Loan Amount" value={loanAmount} />
+              <Detail label="Approved Amount" value={approvedAmount} />
               <Detail label="Tenure" value={tenure} />
               <Detail label="Vehicle" value={vehicle} />
+              <Detail label="Disbursement Date" value={disbursementDate} />
             </>
           )}
         </View>
@@ -216,17 +267,18 @@ const styles = StyleSheet.create({
   statusBadge: { backgroundColor: '#16C172', color: '#fff', borderRadius: 7, fontWeight: 'bold', fontSize: 13, paddingHorizontal: 9, paddingVertical: 3 },
   bold: { fontWeight: 'bold', color: '#111' },
   approvedOn: { color: '#16C172', fontWeight: '600', fontSize: 14, marginTop: 3, marginBottom: 6, textAlign: 'center' },
-  tabRow: { flexDirection: 'row', backgroundColor: '#eee', borderRadius: 8, overflow: 'hidden', marginVertical: 7 },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: 'transparent' },
-  tabActive: { backgroundColor: '#fff', borderBottomWidth: 2.5, borderBottomColor: '#16C172' },
-  tabText: { color: '#aaa', fontWeight: 'bold', fontSize: 15 },
-  tabTextActive: { color: '#16C172' },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, elevation: 1, marginTop: 10, borderWidth: 1, borderColor: '#E0E0E0' },
   cardTitle: { fontWeight: 'bold', color: '#16C172', fontSize: 17, marginBottom: 12, textAlign: 'left' },
+  // Only the horizontal margin is dropped — the scroll container pads 15, so
+  // the strip still sits 15 from the screen edge, as on the pending screen.
+  tabRow: { marginHorizontal: 0 },
+  emptyState: { color: '#999', fontSize: 14, fontWeight: '500', paddingVertical: 6 },
 });
 
 const detailStyles = StyleSheet.create({
-  row: { flexDirection: 'row', marginBottom: 9, justifyContent: 'space-between' },
-  label: { color: '#555', fontWeight: '600', fontSize: 14 },
-  value: { color: '#181818', fontSize: 14, fontWeight: '500', maxWidth: 180, textAlign: 'right' },
+  // flexShrink lets both sides wrap instead of pushing the row wider than the
+  // card, which matters now that a card can be half the screen.
+  row: { flexDirection: 'row', marginBottom: 9, justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
+  label: { color: '#555', fontWeight: '600', fontSize: 14, flexShrink: 1 },
+  value: { color: '#181818', fontSize: 14, fontWeight: '500', flexShrink: 1, textAlign: 'right' },
 });

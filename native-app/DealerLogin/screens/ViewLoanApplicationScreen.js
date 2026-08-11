@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, ScrollView, Alert } from 'react-native';
 import Navbar from '../components/Navbar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearSession } from '../utils/SecureStorage';
@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_BASE } from '../config';
 import { WORKFLOW_STAGES, stageLabel, stageIndex } from '../utils/workflowConfig';
 import CibilMeter, { cibilColor, hasCibilScore } from '../components/CibilMeter';
+import SectionTabs, { APPLICATION_TABS } from '../components/SectionTabs';
 
 // ✅ Render Step Circle with Completed, Current, and Pending States
 function renderStepCircle(idx, currentStep) {
@@ -43,12 +44,67 @@ function renderStepCircle(idx, currentStep) {
   }
 }
 
+// A party (applicant or co-applicant) may use the legacy nested shape, where
+// the real person sits one level down. Resolve once so callers read plain
+// fields.
+const resolveParty = (party) => party?.applicant || party || {};
+
+// PAN of an embedded party, tolerating both field names the records use.
+const partyPan = (party) => {
+  const person = resolveParty(party);
+  return String(person.panNo || person.pan || '').trim().toUpperCase();
+};
+
+// Older records carry only a subset of the fields below. Nothing missing may
+// reach the screen as a blank row, "undefined" or "Invalid Date" — the em dash
+// is what the rest of the app already shows for an absent value.
+const text = (value) => {
+  const str = value === null || value === undefined ? '' : String(value).trim();
+  return str || '—';
+};
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+};
+
+const hasParty = (party) =>
+  Object.values(resolveParty(party)).some(
+    (v) => v !== null && v !== undefined && String(v).trim() !== ''
+  );
+
+function DetailRow({ label, value }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
+// The same four personal fields, rendered identically for either role.
+function PersonDetails({ party }) {
+  const person = resolveParty(party);
+  return (
+    <>
+      <DetailRow label="Full Name" value={text(person.name)} />
+      <DetailRow label="Father's Name" value={text(person.fatherName)} />
+      <DetailRow label="DOB" value={formatDate(person.dateOfBirth)} />
+      <DetailRow label="Aadhar No" value={text(person.aadharNo)} />
+    </>
+  );
+}
+
 export default function ViewLoanApplicationScreen({ route, navigation }) {
   const { fileId } = route.params;
   const [user, setUser] = useState(null);
   const [application, setApplication] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('personal');
+
+  // Which of Applicant / Co-Applicant / Loan Details is on screen. It drives
+  // both the section below the tabs and whose score the CIBIL card shows.
+  const [activeTab, setActiveTab] = useState('applicant');
 
   useEffect(() => {
     const loadUser = async () => {
@@ -107,13 +163,58 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
   // Applicant shape differs by record age: legacy records embed the real
   // applicant one level down (application.applicant.applicant), newer ones
   // store it flat. Resolve once here so the JSX below reads plain fields.
-  const applicant = application.applicant?.applicant || application.applicant || {};
+  const applicant = resolveParty(application.applicant);
+
+  // Some applications have no co-applicant at all; the card stays, its body
+  // becomes an empty state.
+  const hasCoApplicant = hasParty(application.coApplicant);
 
   // CIBIL summary as already returned by the existing response. No refetch.
+  //
+  // The application may now carry one report PER PERSON in `cibilSubjects`,
+  // each tagged with its own `subjectPan`; `application.cibil` remains the
+  // single-subject summary that predates it. An entry is field-compatible with
+  // `cibil` (same score/state/requestId names), so either can drive the card.
+  //
+  // Resolution is the rule the Admin panel applies verbatim
+  // (admin-frontend/src/utils/cibilSubjects.js — subjectSummary), so mobile and
+  // Admin cannot disagree about whose score is whose:
+  //
+  //   1. the `cibilSubjects` entry whose PAN is this party's
+  //   2. `cibil`, only when its own subjectPan IS this party
+  //   3. `cibil` with NO subjectPan, for the APPLICANT only — the pre-swap rule,
+  //      where an unattributed summary meant "the applicant"
+  //   4. otherwise nothing at all
+  //
+  // There is deliberately no fifth rule: a co-applicant with no report of their
+  // own shows the empty state rather than borrowing the applicant's score.
   const cibil = application.cibil || {};
-  const cibilScore = hasCibilScore(cibil.score) ? cibil.score : null;
+  const cibilSubjects = Array.isArray(application.cibilSubjects) ? application.cibilSubjects : [];
+  const legacySubjectPan = String(cibil.subjectPan || '').trim().toUpperCase();
+
+  const summaryFor = (party, isApplicant) => {
+    const pan = partyPan(party);
+    if (pan) {
+      const entry = cibilSubjects.find(
+        (e) => String(e?.subjectPan || '').trim().toUpperCase() === pan
+      );
+      if (entry) return entry;
+      if (legacySubjectPan && legacySubjectPan === pan) return cibil;
+    }
+    if (!legacySubjectPan && isApplicant) return cibil;
+    return {};
+  };
+
+  // The one CIBIL card follows the tabs: the Co-Applicant tab shows the
+  // co-applicant's score, Applicant and Loan Details both show the applicant's.
+  const cibilIsApplicant = activeTab !== 'coApplicant';
+  const cibilParty = cibilIsApplicant ? application.applicant : application.coApplicant;
+  const cibilSubjectLabel = cibilIsApplicant ? 'Applicant' : 'Co-Applicant';
+  const cibilSummary = summaryFor(cibilParty, cibilIsApplicant);
+  const cibilScore = hasCibilScore(cibilSummary.score) ? cibilSummary.score : null;
   const cibilProcessing =
-    cibilScore === null && String(cibil.state || '').toLowerCase() === 'pending';
+    cibilScore === null &&
+    String(cibilSummary.state || '').toLowerCase() === 'pending';
   const cibilRating =
     cibilScore === null ? '' : cibilScore >= 750 ? 'EXCELLENT' : cibilScore >= 650 ? 'GOOD' : 'LOW';
 
@@ -162,10 +263,12 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* CIBIL Meter — reads the cibil summary already present on the
-              loaded application; no extra request is made. */}
+          {/* CIBIL Meter — one card, reading the cibil summary already present
+              on the loaded application; no extra request is made. Its subject
+              is whoever the selected tab is about. */}
           <View style={styles.cibilCard}>
             <Text style={styles.cibilTitle}>CIBIL Score</Text>
+            <Text style={styles.cibilSubject}>{cibilSubjectLabel}</Text>
             <CibilMeter score={cibilScore} processing={cibilProcessing} size={210} />
             <Text
               style={[
@@ -187,65 +290,55 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
           </View>
 
           {/* Tabs */}
-          <View style={styles.tabRow}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'personal' && styles.tabActive]}
-              onPress={() => setActiveTab('personal')}
-            >
-              <Text style={[styles.tabText, activeTab === 'personal' && styles.tabTextActive]}>Personal Details</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'loan' && styles.tabActive]}
-              onPress={() => setActiveTab('loan')}
-            >
-              <Text style={[styles.tabText, activeTab === 'loan' && styles.tabTextActive]}>Loan Details</Text>
-            </TouchableOpacity>
-          </View>
+          <SectionTabs tabs={APPLICATION_TABS} activeKey={activeTab} onChange={setActiveTab} />
 
+          {/* One section at a time, chosen by the tab above. Applicant and
+              Co-Applicant are whoever currently holds each role on the loaded
+              application, so a swap is reflected without any extra work. */}
           <View style={styles.detailsCard}>
-            {activeTab === 'personal' ? (
+            {activeTab === 'applicant' && (
               <>
-                <Text style={styles.sectionTitle}>Personal Details</Text>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Full Name</Text>
-                  <Text style={styles.detailValue}>{applicant.name}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Father's Name</Text>
-                  <Text style={styles.detailValue}>{applicant.fatherName}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>DOB</Text>
-                  <Text style={styles.detailValue}>{new Date(applicant.dateOfBirth).toLocaleDateString()}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Aadhar No</Text>
-                  <Text style={styles.detailValue}>{applicant.aadharNo}</Text>
-                </View>
+                <Text style={styles.sectionTitle}>Applicant Details</Text>
+                <PersonDetails party={application.applicant} />
               </>
-            ) : (
+            )}
+
+            {activeTab === 'coApplicant' && (
+              <>
+                <Text style={styles.sectionTitle}>Co-Applicant Details</Text>
+                {hasCoApplicant ? (
+                  <PersonDetails party={application.coApplicant} />
+                ) : (
+                  <Text style={styles.emptyState}>No Co-Applicant</Text>
+                )}
+              </>
+            )}
+
+            {activeTab === 'loanDetails' && (
               <>
                 <Text style={styles.sectionTitle}>Loan Details</Text>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Application ID</Text>
-                  <Text style={styles.detailValue}>{application._id}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Vehicle</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails?.brandName} {application.vehicleDetails?.modelName}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Price</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails?.priceOfVehicle}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Finance Required</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails?.financeRequired}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Tenure</Text>
-                  <Text style={styles.detailValue}>{application.vehicleDetails?.tenure} months</Text>
-                </View>
+                <DetailRow label="Application ID" value={text(application._id)} />
+                <DetailRow
+                  label="Vehicle"
+                  value={text(
+                    [application.vehicleDetails?.brandName, application.vehicleDetails?.modelName]
+                      .filter(Boolean)
+                      .join(' ')
+                  )}
+                />
+                <DetailRow label="Price" value={text(application.vehicleDetails?.priceOfVehicle)} />
+                <DetailRow
+                  label="Finance Required"
+                  value={text(application.vehicleDetails?.financeRequired)}
+                />
+                <DetailRow
+                  label="Tenure"
+                  value={
+                    application.vehicleDetails?.tenure
+                      ? `${application.vehicleDetails.tenure} months`
+                      : '—'
+                  }
+                />
               </>
             )}
           </View>
@@ -273,16 +366,14 @@ const styles = StyleSheet.create({
   stepCurrent: { backgroundColor: '#fff', borderColor: '#16C172' },
   stepPending: { backgroundColor: '#fff', borderColor: '#BDBDBD' },
   cibilCard: { backgroundColor: '#fff', marginHorizontal: 14, marginTop: 4, marginBottom: 6, borderRadius: 9, paddingVertical: 16, paddingHorizontal: 16, alignItems: 'center', elevation: 1, borderWidth: 1, borderColor: '#E0E0E0', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
-  cibilTitle: { fontWeight: 'bold', color: '#222', fontSize: 17, marginBottom: 11, textAlign: 'center' },
+  cibilTitle: { fontWeight: 'bold', color: '#222', fontSize: 17, marginBottom: 2, textAlign: 'center' },
+  // Whose score is on the meter — the card is shared by all three tabs.
+  cibilSubject: { color: '#666', fontSize: 12.5, fontWeight: '700', letterSpacing: 0.6, marginBottom: 11, textAlign: 'center', textTransform: 'uppercase' },
   cibilRating: { marginTop: 10, fontSize: 15, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
   statusBox: { backgroundColor: '#F8F8F8', borderRadius: 8, padding: 0, marginHorizontal: 18, marginTop: 10, marginBottom: 14, elevation: 1 },
   statusText: { fontSize: 15, color: '#111', fontWeight: 'bold', paddingVertical: 10 },
-  tabRow: { flexDirection: 'row', backgroundColor: '#EEE', marginHorizontal: 15, borderRadius: 7, marginBottom: 0, overflow: 'hidden', marginTop: 4 },
-  tab: { flex: 1, paddingVertical: 9, backgroundColor: 'transparent', alignItems: 'center' },
-  tabActive: { backgroundColor: '#fff', borderBottomWidth: 2.5, borderBottomColor: '#16C172' },
-  tabText: { fontWeight: 'bold', color: '#999', fontSize: 15 },
-  tabTextActive: { color: '#16C172' },
   detailsCard: { backgroundColor: '#fff', marginHorizontal: 14, marginTop: 18, borderRadius: 9, padding: 16, elevation: 1, borderWidth: 1, borderColor: '#E0E0E0' },
+  emptyState: { color: '#999', fontSize: 15, fontWeight: '500', paddingVertical: 8 },
   sectionTitle: { fontWeight: 'bold', color: '#222', fontSize: 17, marginBottom: 11, textAlign: 'left' },
   detailRow: { flexDirection: 'row', marginBottom: 10 },
   detailLabel: { flex: 1.1, color: '#666', fontWeight: 'bold', fontSize: 15 },
