@@ -64,6 +64,25 @@ const VENDOR = "Xaler-TransUnion";
 const subjectOf = (appDoc) => partySubjectPan(appDoc?.applicant);
 
 /**
+ * The duplicate-fetch lookup: has THIS PERSON already been pulled for THIS
+ * application?
+ *
+ * Keyed by { applicationId, subjectPan } — the same key saveCibilReport upserts
+ * on and the same key the compound unique index enforces, so the guard and the
+ * write can never disagree about what "already fetched" means.
+ *
+ * The collection is a parameter purely so the decision can be exercised against
+ * an in-memory fake in tests; production always passes CibilReport.collection.
+ * Returns the existing report, or null when a pull is permitted.
+ */
+export async function findReportForSubject(collection, applicationId, subjectPan) {
+  return collection.findOne(
+    { applicationId, subjectPan },
+    { projection: { _id: 1, requestId: 1 } }
+  );
+}
+
+/**
  * Keep the per-person list in step with the summary just written. Called
  * immediately before each save so the two can never disagree on disk.
  */
@@ -109,6 +128,51 @@ export async function processApplicationCibil(appDoc) {
     }
 
     const applicant = appDoc.applicant || {};
+
+    // ── Duplicate-fetch guard ────────────────────────────────────────────
+    // A bureau pull is billable. The compound unique index on
+    // { applicationId, subjectPan } stops a duplicate ROW, but it only fires
+    // after the vendor has already been called and charged. This check happens
+    // BEFORE the call, so a subject that already has a report is never pulled
+    // twice.
+    //
+    // Keyed per PERSON, not per application: the same application may legally
+    // hold one report for the applicant and one for the co-applicant, so this
+    // must not block a second SUBJECT — only a second pull for the SAME
+    // subject. That distinction is the whole point of the guard.
+    //
+    // It cannot fire on the existing applicant flow: this runs once, at
+    // creation, on a document that has no report yet. Existing behaviour is
+    // therefore untouched — see the race note in the header.
+    const subjectPan = subjectOf(appDoc);
+    const existing = await findReportForSubject(
+      CibilReport.collection,
+      appDoc._id,
+      subjectPan
+    );
+    if (existing) {
+      logEvent("cibil_skipped_duplicate", {
+        applicationId: String(appDoc._id),
+        formId: appDoc.formId,
+        reportId: String(existing._id),
+        requestId: existing.requestId || null,
+      });
+      await hist(
+        "CIBIL_SKIPPED",
+        "CIBIL not requested — a report already exists for this subject"
+      );
+      // Explicitly an idempotent no-op, NOT a failure: dealerStatus stays
+      // "pending_cibil" so no caller reads it as rejected, unavailable,
+      // invalid or low-score. The application's status, workflowStage,
+      // `cibil` summary and stored report are all left exactly as they are.
+      return {
+        dealerStatus: DEALER_STATUS.PENDING_CIBIL,
+        alreadyFetched: true,
+        skipped: "report_exists_for_subject",
+        subjectPan,
+      };
+    }
+
     const result = await fetchCibilReport(applicant, config);
     logEvent("cibil_response", {
       applicationId: String(appDoc._id), formId: appDoc.formId,
