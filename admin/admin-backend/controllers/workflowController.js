@@ -26,6 +26,7 @@ import {
 } from "../utils/accessFilter.js";
 import { logEvent } from "../utils/log.js";
 import { escapeRegex } from "../utils/escapeRegex.js";
+import { modelForType, buildFilesFilter, MAX_BULK } from "../utils/filesQuery.js";
 import { initVehicleDocs } from "../utils/vehicleDocs.js";
 import { loadCibilPolicy, buildEligibility } from "../utils/loanEligibility.js";
 import { buildApprovalChecklist } from "../utils/approvalChecklist.js";
@@ -882,13 +883,100 @@ export const rejectApplication = async (req, res) => {
    independently; a failure on one does not abort the rest, and all
    failures are returned (never silently ignored).
    ============================================================ */
-export const bulkApproveApplications = async (req, res) => {
-  const ids = Array.isArray(req.body?.applicationIds)
+/**
+ * Resolve the ids a bulk action should operate on.
+ *
+ * Two ways to ask, and the explicit one is unchanged:
+ *
+ *   { applicationIds: [...] }                     — as before
+ *   { filter: { type, search, branch, ... },
+ *     expectedCount: n }                          — select-all-matching-filter
+ *
+ * The filter form exists because the operator can no longer hold every matching
+ * row in the browser once the list is paginated. It is deliberately strict,
+ * because with it nobody sees the individual ids before the action runs:
+ *
+ *  - the filter is rebuilt server-side by the SAME buildFilesFilter the list
+ *    used, so the set acted on is the set that was on screen;
+ *  - `expectedCount` must match the live count, or the request is refused with
+ *    409 and the real number. Between the operator confirming and the request
+ *    arriving, a dealer may have submitted or another admin may have approved
+ *    something; without this check the action would silently cover a different
+ *    set than was confirmed;
+ *  - more than MAX_BULK matches is refused with 413 rather than truncated,
+ *    because these ids are processed sequentially below and a half-finished
+ *    bulk run leaves some applications transitioned and the rest not.
+ *
+ * Returns { ok:true, ids } or { ok:false, status, body }.
+ */
+const resolveBulkIds = async (req) => {
+  const explicit = Array.isArray(req.body?.applicationIds)
     ? req.body.applicationIds.filter(Boolean)
     : [];
-  if (!ids.length) {
-    return res.status(400).json({ error: "applicationIds must be a non-empty array" });
+
+  if (explicit.length) return { ok: true, ids: explicit };
+
+  const spec = req.body?.filter;
+  if (!spec || typeof spec !== "object") {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "applicationIds must be a non-empty array, or provide filter + expectedCount" },
+    };
   }
+
+  const { type, ...query } = spec;
+  const Model = modelForType(type);
+  if (!Model) {
+    return { ok: false, status: 400, body: { error: "filter.type must be pending, approved or rejected" } };
+  }
+
+  const mongoFilter = await buildFilesFilter(type, req.admin, query);
+  const total = await Model.countDocuments(mongoFilter);
+
+  if (total === 0) {
+    return { ok: false, status: 400, body: { error: "No applications match that filter.", total: 0 } };
+  }
+
+  const expected = Number(req.body?.expectedCount);
+  if (!Number.isFinite(expected)) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "expectedCount is required when acting on a filter.", total },
+    };
+  }
+  if (expected !== total) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: "The matching applications changed since you confirmed. Review and try again.",
+        expectedCount: expected,
+        total,
+      },
+    };
+  }
+  if (total > MAX_BULK) {
+    return {
+      ok: false,
+      status: 413,
+      body: {
+        error: `That filter matches ${total} applications; the limit for one bulk action is ${MAX_BULK}. Narrow the filter and try again.`,
+        total,
+        maxBulk: MAX_BULK,
+      },
+    };
+  }
+
+  const rows = await Model.find(mongoFilter).select("_id").lean();
+  return { ok: true, ids: rows.map((r) => String(r._id)) };
+};
+
+export const bulkApproveApplications = async (req, res) => {
+  const resolved = await resolveBulkIds(req);
+  if (!resolved.ok) return res.status(resolved.status).json(resolved.body);
+  const ids = resolved.ids;
 
   const approved = [];
   const failed = [];
@@ -912,12 +1000,10 @@ export const bulkApproveApplications = async (req, res) => {
 };
 
 export const bulkRejectApplications = async (req, res) => {
-  const ids = Array.isArray(req.body?.applicationIds)
-    ? req.body.applicationIds.filter(Boolean)
-    : [];
-  if (!ids.length) {
-    return res.status(400).json({ error: "applicationIds must be a non-empty array" });
-  }
+  const resolved = await resolveBulkIds(req);
+  if (!resolved.ok) return res.status(resolved.status).json(resolved.body);
+  const ids = resolved.ids;
+
   const reason = req.body?.reason || "Bulk rejected";
 
   const rejected = [];

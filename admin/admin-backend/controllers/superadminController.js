@@ -11,6 +11,15 @@ import { sendPushNotification } from "../utils/sendPushNotification.js";
 import { createHistoryEntry } from "./formTrackingController.js";
 import { getStatCounts, getPendingAccessFilter, buildFinalizedFilter } from "../utils/accessFilter.js";
 import { escapeRegex } from "../utils/escapeRegex.js";
+import {
+  modelForType,
+  buildFilesFilter,
+  selectForType,
+  parsePaging,
+  wantsPagination,
+  buildSort,
+  DEALER_POPULATE,
+} from "../utils/filesQuery.js";
 
 export const createAdmin = async (req, res) => {
   try {
@@ -228,11 +237,18 @@ export const applicationStats = async (req, res) => {
     // Superadmin route — req.admin is always superadmin here, so getStatCounts
     // returns global unfiltered counts.  The same helper is used by /workflow/stats
     // for regular admins, ensuring both paths share identical counting logic.
+    // `from`/`to` are optional. Without them the response is byte-identical to
+    // what it has always been; with them the tiles can be date-scoped without
+    // the dashboard downloading every record to filter client-side.
+    const { from, to } = req.query;
+    const dateRange = from || to ? { from, to } : null;
+
     const counts = await getStatCounts(
       req.admin,
       Application,
       ApprovedApplication,
-      RejectedApplication
+      RejectedApplication,
+      dateRange
     );
     return res.json({ stats: counts });
   } catch (err) {
@@ -241,67 +257,118 @@ export const applicationStats = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/superadmin/files/:type
+ *
+ * Two response shapes, chosen by the caller:
+ *
+ *   no page/limit  → the bare array this endpoint has always returned
+ *   page or limit  → { items, page, limit, total, pages }
+ *
+ * The opt-in matters. Both existing clients read the response as
+ * `Array.isArray(data) ? data : []`, so returning an envelope unasked would not
+ * throw — it would render an empty table and read as data loss. Keeping the
+ * legacy branch lets the two consumers migrate independently; once both send
+ * `page`, the unpaginated branch can be deleted.
+ *
+ * Search, filters and sort are all applied by the database now. The filter is
+ * built by the shared buildFilesFilter, which the count, facets and bulk paths
+ * use too, so none of them can disagree about which records match.
+ *
+ * The unpaginated branch is unchanged in behaviour and remains unbounded: it is
+ * the legacy path, not a supported one, and it is what this work exists to
+ * retire.
+ */
 export const getFilesByType = async (req, res) => {
   try {
     const { type } = req.params;
-    let applications = [];
-
-    const basePending = {
-      $or: [
-        { status: { $in: ["pending", null] } },
-        { workflowStage: { $exists: false } },
-        { workflowStage: { $nin: ["disbursed", "rejected", "approved"] } },
-      ],
-    };
-
-    switch (type) {
-      case "pending": {
-        const accessFilter = getPendingAccessFilter(req.admin);
-        const filter =
-          Object.keys(accessFilter).length === 0
-            ? basePending
-            : { $and: [basePending, accessFilter] };
-        applications = await Application.find(filter)
-          .select("formId applicant coApplicant vehicleDetails dealer dealerDetails status workflowStage createdAt updatedAt")
-          .populate("dealer", "email userId name district branch")
-          .lean();
-        break;
-      }
-
-      case "approved": {
-        const filter = await buildFinalizedFilter(req.admin);
-        // approvedAt is the dedicated, immutable approval timestamp (source for
-        // Processing Days); updatedAt is kept for the existing "Updated Date" column.
-        // `disbursement` carries the business date entered at disbursement, which
-        // the Approved export prints as its own column — additive projection only.
-        applications = await ApprovedApplication.find(filter)
-          .select("formId applicant coApplicant vehicleDetails dealer dealerDetails status workflowStage createdAt updatedAt approvedAt disbursement")
-          .populate("dealer", "email userId name district branch")
-          .lean();
-        break;
-      }
-
-      case "rejected": {
-        const filter = await buildFinalizedFilter(req.admin);
-        // The rejection timestamp/reason live under the nested `rejection`
-        // object (rejection.rejectedAt / rejection.reason) — the previous select
-        // named non-existent top-level rejectedAt/reason, so neither reached the
-        // client. updatedAt is unreliable here (historical records left it equal
-        // to the submission date), so the export must read rejection.rejectedAt.
-        applications = await RejectedApplication.find(filter)
-          .select("formId applicant coApplicant vehicleDetails dealer dealerDetails status workflowStage rejection createdAt updatedAt")
-          .populate("dealer", "email userId name district branch")
-          .lean();
-        break;
-      }
-
-      default:
-        return res.status(400).json({ message: "Invalid type. Use: pending, approved, or rejected" });
+    const Model = modelForType(type);
+    if (!Model) {
+      return res.status(400).json({ message: "Invalid type. Use: pending, approved, or rejected" });
     }
 
-    return res.json(applications);
+    const filter = await buildFilesFilter(type, req.admin, req.query);
+    const select = selectForType(type);
+
+    if (!wantsPagination(req.query)) {
+      const applications = await Model.find(filter)
+        .select(select)
+        .populate(DEALER_POPULATE.path, DEALER_POPULATE.select)
+        .lean();
+      return res.json(applications);
+    }
+
+    const { page, limit, skip } = parsePaging(req.query);
+    const sort = buildSort(req.query);
+
+    const [items, total] = await Promise.all([
+      Model.find(filter)
+        .select(select)
+        .populate(DEALER_POPULATE.path, DEALER_POPULATE.select)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Model.countDocuments(filter),
+    ]);
+
+    return res.json({ items, page, limit, total, pages: Math.ceil(total / limit) });
   } catch (err) {
     console.error("getFilesByType:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+/**
+ * GET /api/superadmin/files/:type/facets
+ *
+ * The branch / district / stage dropdown options.
+ *
+ * The table used to derive these with `new Set(...)` over the whole downloaded
+ * dataset. Once only one page is in the browser that derivation would offer
+ * only the values that happen to appear on that page, so the options have to
+ * come from the database — over the SAME filter the list uses, minus the facet
+ * being listed, so the choices on offer are the ones that would actually return
+ * rows.
+ */
+export const getFileFacets = async (req, res) => {
+  try {
+    const { type } = req.params;
+    const Model = modelForType(type);
+    if (!Model) {
+      return res.status(400).json({ message: "Invalid type. Use: pending, approved, or rejected" });
+    }
+
+    // Each facet excludes its own current selection, so choosing "Branch A"
+    // does not reduce the Branch list to just "Branch A".
+    const without = (key) => {
+      const q = { ...req.query };
+      delete q[key];
+      return buildFilesFilter(type, req.admin, q);
+    };
+
+    const [branchFilter, districtFilter, stageFilter] = await Promise.all([
+      without("branch"),
+      without("district"),
+      without("stage"),
+    ]);
+
+    const [branches, districts, stages] = await Promise.all([
+      Model.distinct("dealerDetails.branch", branchFilter),
+      Model.distinct("dealerDetails.district", districtFilter),
+      Model.distinct("workflowStage", stageFilter),
+    ]);
+
+    const clean = (list) =>
+      [...new Set(list.filter((v) => typeof v === "string" && v.trim()))].sort();
+
+    return res.json({
+      branches: clean(branches),
+      districts: clean(districts),
+      stages: clean(stages),
+    });
+  } catch (err) {
+    console.error("getFileFacets:", err);
     return res.status(500).json({ message: "Server error" });
   }
 };

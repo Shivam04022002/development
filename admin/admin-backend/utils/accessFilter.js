@@ -77,12 +77,41 @@ export const buildFinalizedFilter = async (_admin, baseFilter = {}) => {
  * - approved : unfiltered (all admins see all)
  * - rejected : unfiltered (all admins see all)
  */
+/**
+ * Optional { from, to } → a createdAt clause, or null.
+ *
+ * The Super Admin stat tiles used to be produced by downloading every record
+ * and filtering by date in the browser. Counting them here instead is what lets
+ * that download go away. The bounds match what the client applied: the whole of
+ * the `from` day through the whole of the `to` day.
+ */
+const statDateClause = (range) => {
+  if (!range) return null;
+  const out = {};
+  if (range.from) {
+    const d = new Date(range.from);
+    if (!Number.isNaN(d.getTime())) { d.setHours(0, 0, 0, 0); out.$gte = d; }
+  }
+  if (range.to) {
+    const d = new Date(range.to);
+    if (!Number.isNaN(d.getTime())) { d.setHours(23, 59, 59, 999); out.$lte = d; }
+  }
+  return Object.keys(out).length ? { createdAt: out } : null;
+};
+
+/**
+ * `dateRange` is optional and defaults to null, so the existing caller
+ * (/workflow/stats) keeps returning exactly the counts it always has.
+ */
 export const getStatCounts = async (
   admin,
   Application,
   ApprovedApplication,
-  RejectedApplication
+  RejectedApplication,
+  dateRange = null
 ) => {
+  const dateFilter = statDateClause(dateRange);
+  const withDate = (f) => (dateFilter ? { $and: [f, dateFilter] } : f);
   const basePending = {
     $or: [
       { status: { $in: ["pending", null] } },
@@ -103,10 +132,10 @@ export const getStatCounts = async (
       : { $and: [basePending, excludeCibilStates, pendingAccessFilter] };
 
   const [pending, approved, rejected, pendingCibil] = await Promise.all([
-    Application.countDocuments(pendingFilter),
-    ApprovedApplication.countDocuments({}),
-    RejectedApplication.countDocuments({}),
-    Application.countDocuments({ workflowStage: "pending_cibil" }),
+    Application.countDocuments(withDate(pendingFilter)),
+    ApprovedApplication.countDocuments(dateFilter || {}),
+    RejectedApplication.countDocuments(dateFilter || {}),
+    Application.countDocuments(withDate({ workflowStage: "pending_cibil" })),
   ]);
 
   return {

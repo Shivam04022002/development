@@ -12,6 +12,7 @@ import {
   applicationStats,
   applicationHistory,
   getFilesByType,
+  getFileFacets,
   getAdminActivity,
   revokeRejectedApplication,
   createDealer,
@@ -39,6 +40,9 @@ router.get("/dashboard/stats", applicationStats);
 router.get("/dashboard/application/:applicationId/history", applicationHistory);
 router.get("/dashboard/admin/:adminId/activity", getAdminActivity);
 
+// Facets must be declared BEFORE /files/:type or "pending/facets" would be
+// swallowed by the :type param route.
+router.get("/files/:type/facets", getFileFacets);
 router.get("/files/:type", getFilesByType);
 router.post("/applications/revoke", revokeRejectedApplication);
 
