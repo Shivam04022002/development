@@ -7,6 +7,7 @@ import SuperAdminNav from "../components/SuperAdminNav";
 import logo from "../assets/logo-surjit.png";
 import * as XLSX from 'xlsx';
 import FilesManagementTable from "../components/FilesManagementTable";
+import useSuperAdminFiles from "../hooks/useSuperAdminFiles";
 import { WORKFLOW_STAGES, stageLabel, toStage } from "../utils/workflowConfig";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -99,6 +100,14 @@ const DonutCenterLabel = ({ formattedGraphicalItems, total }) => {
 // ── Date utility helpers ────────────────────────────────────────────────────
 const startOfDay = (d) => { const r = new Date(d); r.setHours(0,0,0,0); return r; };
 const endOfDay   = (d) => { const r = new Date(d); r.setHours(23,59,59,999); return r; };
+// YYYY-MM-DD in LOCAL time. toISOString() would shift the day backwards for
+// any timezone east of UTC, silently moving the range by one day.
+const toIsoDay = (d) => {
+  const x = new Date(d);
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${x.getFullYear()}-${m}-${day}`;
+};
 const todayStart = () => startOfDay(new Date());
 const todayEnd   = () => endOfDay(new Date());
 
@@ -154,21 +163,12 @@ const fmtRangeLabel = (from, to) => {
   return `${f} – ${t}`;
 };
 
-const applyDateFilter = (apps, from, to) => {
-  if (!from && !to) return apps;
-  return apps.filter((app) => {
-    const d = app?.createdAt ? new Date(app.createdAt) : null;
-    if (!d) return false;
-    if (from && d < from) return false;
-    if (to   && d > to)   return false;
-    return true;
-  });
-};
+
 
 // ── StatsDashboard ──────────────────────────────────────────────────────────
 const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
-  // Raw full data fetched once
-  const [rawData, setRawData] = React.useState({ pending: [], approved: [], rejected: [], loaded: false });
+  // Counts only — no application records are held here any more.
+  const [counts, setCounts] = React.useState({ pending: 0, approved: 0, rejected: 0, loaded: false });
   const [loadingData, setLoadingData] = React.useState(false);
 
   // Active quick-filter key
@@ -182,32 +182,60 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
 
   const [exporting, setExporting] = React.useState({ pending: false, approved: false, rejected: false, all: false });
 
-  // ── Fetch all data once ──────────────────────────────────────────────────
-  const fetchAllData = React.useCallback(async () => {
+  // ── Counts for the selected range ────────────────────────────────────────
+  //
+  // These three numbers used to be produced by downloading every pending,
+  // approved and rejected record and calling .length on a client-side date
+  // filter. They are now four countDocuments on the server, so the dashboard
+  // holds no application data at all and its cost no longer grows with the
+  // corpus. The tiles are the only thing that needed the arrays; the export
+  // handlers below fetch their rows on demand.
+  const fetchCounts = React.useCallback(async () => {
     setLoadingData(true);
     try {
-      const token = localStorage.getItem("adminToken");
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const [p, a, r] = await Promise.all([
-        API.get("/superadmin/files/pending",  { headers }),
-        API.get("/superadmin/files/approved", { headers }),
-        API.get("/superadmin/files/rejected", { headers }),
-      ]);
-      setRawData({
-        pending:  Array.isArray(p.data) ? p.data : [],
-        approved: Array.isArray(a.data) ? a.data : [],
-        rejected: Array.isArray(r.data) ? r.data : [],
+      const params = {};
+      if (rangeFrom) params.from = toIsoDay(rangeFrom);
+      if (rangeTo)   params.to   = toIsoDay(rangeTo);
+      const { data } = await API.get("/superadmin/dashboard/stats", { params });
+      const s = data?.stats || {};
+      setCounts({
+        pending:  Number(s.pending)  || 0,
+        approved: Number(s.approved) || 0,
+        rejected: Number(s.rejected) || 0,
         loaded: true,
       });
     } catch (err) {
-      console.error("Failed to load stats data", err?.response?.data || err.message);
-      setRawData({ pending: [], approved: [], rejected: [], loaded: true });
+      console.error("Failed to load stats", err?.response?.data || err.message);
+      setCounts({ pending: 0, approved: 0, rejected: 0, loaded: true });
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [rangeFrom, rangeTo]);
 
-  React.useEffect(() => { fetchAllData(); }, [fetchAllData]);
+  React.useEffect(() => { fetchCounts(); }, [fetchCounts]);
+
+  /**
+   * Rows for an export, fetched a page at a time over the same date range the
+   * tiles are showing. Exports are the only place that still needs every row,
+   * and this is the pattern AdminAnalytics.fetchAll already uses.
+   */
+  const fetchRowsForExport = React.useCallback(async (type) => {
+    const params = {};
+    if (rangeFrom) params.from = toIsoDay(rangeFrom);
+    if (rangeTo)   params.to   = toIsoDay(rangeTo);
+
+    const rows = [];
+    let page = 1, pages = 1;
+    do {
+      const { data } = await API.get(`/superadmin/files/${type}`, {
+        params: { ...params, page, limit: 100 },
+      });
+      (data?.items || []).forEach((r) => rows.push(r));
+      pages = Number(data?.pages) || 1;
+      page += 1;
+    } while (page <= pages && page <= 100);
+    return rows;
+  }, [rangeFrom, rangeTo]);
 
   // ── Apply quick filter ───────────────────────────────────────────────────
   const applyQuickFilter = (key) => {
@@ -226,14 +254,11 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
     setRangeTo(customTo   ? endOfDay(new Date(customTo))   : null);
   };
 
-  // ── Filtered data ────────────────────────────────────────────────────────
-  const filteredPending  = React.useMemo(() => applyDateFilter(rawData.pending,  rangeFrom, rangeTo), [rawData.pending,  rangeFrom, rangeTo]);
-  const filteredApproved = React.useMemo(() => applyDateFilter(rawData.approved, rangeFrom, rangeTo), [rawData.approved, rangeFrom, rangeTo]);
-  const filteredRejected = React.useMemo(() => applyDateFilter(rawData.rejected, rangeFrom, rangeTo), [rawData.rejected, rangeFrom, rangeTo]);
-
-  const pending  = filteredPending.length;
-  const approved = filteredApproved.length;
-  const rejected = filteredRejected.length;
+  // The date range is applied by the server now, so these are read straight
+  // from the counts response rather than derived from downloaded arrays.
+  const pending  = counts.pending;
+  const approved = counts.approved;
+  const rejected = counts.rejected;
   const total    = pending + approved + rejected;
 
   const barData = [
@@ -246,11 +271,11 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
   const rangeLabel = fmtRangeLabel(rangeFrom, rangeTo);
 
   // ── Export handlers ──────────────────────────────────────────────────────
-  const handleExport = (status) => {
+  const handleExport = async (status) => {
     setExporting((prev) => ({ ...prev, [status]: true }));
     try {
-      const map = { pending: filteredPending, approved: filteredApproved, rejected: filteredRejected };
-      exportApplicationsToExcel(map[status], status, rangeFrom, rangeTo);
+      const rows = await fetchRowsForExport(status);
+      exportApplicationsToExcel(rows, status, rangeFrom, rangeTo);
     } catch (err) {
       alert("Export failed: " + err.message);
     } finally {
@@ -258,10 +283,15 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
     }
   };
 
-  const handleExportAll = () => {
+  const handleExportAll = async () => {
     setExporting((prev) => ({ ...prev, all: true }));
     try {
-      exportAllToExcel(filteredPending, filteredApproved, filteredRejected, rangeFrom, rangeTo);
+      const [p, a, r] = await Promise.all([
+        fetchRowsForExport("pending"),
+        fetchRowsForExport("approved"),
+        fetchRowsForExport("rejected"),
+      ]);
+      exportAllToExcel(p, a, r, rangeFrom, rangeTo);
     } catch (err) {
       alert("Export failed: " + err.message);
     } finally {
@@ -394,7 +424,7 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
           </div>
         </div>
         <div className="stats-export-row">
-          <button className="stats-refresh-btn" onClick={fetchAllData} title="Refresh">
+          <button className="stats-refresh-btn" onClick={fetchCounts} title="Refresh">
             {iconRefresh} Refresh
           </button>
           <button className="stats-export-btn" style={{ background: "#FFFBEB", borderColor: "#FDE68A", color: "#92400E" }}
@@ -711,9 +741,10 @@ const SuperAdminDashboard = () => {
   const [loadingStats, setLoadingStats] = useState(false);
 
   // Files data
-  const [allFiles, setAllFiles] = useState([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
   const [filesTab, setFilesTab] = useState("pending"); // pending, approved, rejected
+  // One page at a time, searched, filtered, sorted and counted by the server.
+  // Nothing here holds the whole corpus any more.
+  const files = useSuperAdminFiles(filesTab);
 
   // Admin activity modal
   const [selectedAdmin, setSelectedAdmin] = useState(null);
@@ -814,40 +845,56 @@ const SuperAdminDashboard = () => {
     }
   }, []);
 
-  const fetchAllFiles = React.useCallback(async (type = "pending") => {
-    try {
-      setLoadingFiles(true);
+  /**
+   * Switch tab and/or reload the current page.
+   *
+   * The fetching itself belongs to useSuperAdminFiles, which reacts to the type
+   * and the filters. This stays only so the existing call sites — the KPI tiles
+   * and the post-action refreshes — keep working unchanged.
+   */
+  // Depends on files.refresh, not on `files`: the hook returns a new object
+  // every render, so closing over the whole thing would give this callback a
+  // fresh identity each time and re-trigger anything that depends on it.
+  const refreshFiles = files.refresh;
+  const fetchAllFiles = React.useCallback((type) => {
+    if (type && type !== filesTab) setFilesTab(type);   // the hook refetches
+    else refreshFiles();
+  }, [filesTab, refreshFiles]);
+
+  /**
+   * Every row of one type, for an export, fetched a page at a time.
+   *
+   * This used to be three unbounded GETs in parallel. Exports are the one place
+   * that still legitimately needs the whole set, so the cost is paid on an
+   * explicit click rather than on every dashboard load.
+   */
+  const fetchFilesForExport = React.useCallback(async (type) => {
+    const rows = [];
+    let page = 1, pages = 1;
+    do {
       const { data } = await API.get(`/superadmin/files/${type}`, {
-        headers: authHeaders(),
+        params: { page, limit: 100 },
       });
-      setAllFiles(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error(`Failed to load ${type} files`, err?.response?.data || err.message);
-      setAllFiles([]);
-    } finally {
-      setLoadingFiles(false);
-    }
+      (data?.items || []).forEach((r) => rows.push(r));
+      pages = Number(data?.pages) || 1;
+      page += 1;
+    } while (page <= pages && page <= 100);
+    return rows;
   }, []);
 
-  // Fetch all three categories at once (for export-all / export-selected)
   const fetchAllFilesAll = useCallback(async () => {
-    const headers = authHeaders();
     try {
-      const [p, a, r] = await Promise.all([
-        API.get("/superadmin/files/pending",  { headers }),
-        API.get("/superadmin/files/approved", { headers }),
-        API.get("/superadmin/files/rejected", { headers }),
+      const [pending, approved, rejected] = await Promise.all([
+        fetchFilesForExport("pending"),
+        fetchFilesForExport("approved"),
+        fetchFilesForExport("rejected"),
       ]);
-      return {
-        pending:  Array.isArray(p.data) ? p.data : [],
-        approved: Array.isArray(a.data) ? a.data : [],
-        rejected: Array.isArray(r.data) ? r.data : [],
-      };
+      return { pending, approved, rejected };
     } catch (err) {
       console.error("fetchAllFilesAll failed", err?.response?.data || err.message);
       return { pending: [], approved: [], rejected: [] };
     }
-  }, []);
+  }, [fetchFilesForExport]);
 
   const fetchDealers = React.useCallback(async () => {
     try {
@@ -942,12 +989,10 @@ const SuperAdminDashboard = () => {
     fetchDealers();
   }, [admin, navigate, fetchAdmins, fetchRecent, fetchSummary, fetchStats, fetchDealers]);
 
-  // Auto-fetch files when switching to Files tab or changing the files sub-tab
-  useEffect(() => {
-    if (tab === "files") {
-      fetchAllFiles(filesTab);
-    }
-  }, [tab, filesTab, fetchAllFiles]);
+  // No auto-fetch effect here any more. useSuperAdminFiles already loads on
+  // mount and whenever the type or a filter changes, so re-fetching from this
+  // effect would be redundant — and, because the hook returns a fresh object
+  // each render, it would re-run on every render and loop.
 
   // Auto-fetch dealer activity when switching to Dealer Activity tab
   useEffect(() => {
@@ -2332,8 +2377,9 @@ table th {
 
       {tab === "files" && (
         <FilesManagementTable
-          allFiles={allFiles}
-          loadingFiles={loadingFiles}
+          allFiles={files.items}
+          loadingFiles={files.loading}
+          files={files}
           filesTab={filesTab}
           setFilesTab={setFilesTab}
           fetchAllFiles={fetchAllFiles}
