@@ -43,10 +43,29 @@ const getCreatedTs = (app) =>
   app?.vehicleDetails?.createdAt ||
   app?.createdAt ||
   "";
+/**
+ * Submission date AND time, in the viewer's own timezone — e.g.
+ * "10 Aug 2026, 03:42 PM".
+ *
+ * Same en-IN options the rest of the admin already uses for a date with a time
+ * (FormTrackingAudit, DealerManagementTable); en-IN renders the meridiem in
+ * lower case, so it is upper-cased to match the rest of the UI.
+ *
+ * The guard is `isNaN`, not try/catch: an unparseable value does not throw,
+ * it returns the literal string "Invalid Date", which would have been printed
+ * into the column. The em dash is the fallback the table already uses for an
+ * absent value.
+ */
 const fmtDate = (v) => {
   if (!v) return "—";
-  try { return new Date(v).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
-  catch { return "—"; }
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "—";
+  return d
+    .toLocaleString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    })
+    .replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
 };
 
 /* ─── Status badge ────────────────────────────────────────────────────── */
