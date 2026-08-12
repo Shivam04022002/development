@@ -111,22 +111,29 @@ function resolveApplicant(applicant) {
  * Authentication is NOT part of the body: the API key travels in the
  * `Authorization` header.
  */
-function buildRequestBody(applicant = {}, requestId) {
+export function buildRequestBody(applicant = {}, requestId) {
   const { forename, surname } = resolveName(applicant);
+  const pan = String(applicant.panNo ?? applicant.pan ?? "").trim().toUpperCase();
 
-  return {
+  const body = {
     // The one generated id, repeated in all three identifier fields.
     client_key: requestId,
     request_key: requestId,
     partner_customer_id: requestId,
 
-    // Applicant details.
+    // The identity the vendor requires.
     forename,
     surname,
-    pan_id: applicant.panNo || "",
     date_of_birth: toIsoDate(applicant.dateOfBirth),
     phone_number: applicant.mobileNumber || applicant.mobile || "",
   };
+
+  // PAN is optional and sharpens the match when present. When it is absent the
+  // key is omitted rather than sent as "" — an empty identifier is a value the
+  // vendor would have to interpret, where an absent one is simply not supplied.
+  if (pan) body.pan_id = pan;
+
+  return body;
 }
 
 /**

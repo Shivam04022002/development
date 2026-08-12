@@ -57,7 +57,7 @@ export function startCoApplicantCibil(applicationId, deps = {}) {
       const outcome = await fetchCoApplicant(applicationId, { actor });
       // One line per automatic attempt, whatever the outcome, so "did the
       // automation run, and what did it decide?" is answerable from the log.
-      // `status` already distinguishes no_co_applicant / missing_pan (skipped,
+      // `status` already distinguishes no_co_applicant / missing_identity (skipped,
       // no vendor call) from fetched / already_exists / in_progress / the
       // failure statuses. No PAN, score, name or vendor payload is logged.
       log("coapplicant_cibil_auto", {

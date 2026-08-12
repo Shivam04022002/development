@@ -8,6 +8,11 @@ import { API_BASE } from '../config';
 import { WORKFLOW_STAGES, stageLabel, stageIndex } from '../utils/workflowConfig';
 import CibilMeter, { cibilColor, hasCibilScore } from '../components/CibilMeter';
 import SectionTabs, { APPLICATION_TABS } from '../components/SectionTabs';
+import {
+  resolveParty,
+  partySubjectKey,
+  normalizePan,
+} from '../utils/cibilSubjectKey';
 
 // ✅ Render Step Circle with Completed, Current, and Pending States
 function renderStepCircle(idx, currentStep) {
@@ -44,16 +49,9 @@ function renderStepCircle(idx, currentStep) {
   }
 }
 
-// A party (applicant or co-applicant) may use the legacy nested shape, where
-// the real person sits one level down. Resolve once so callers read plain
-// fields.
-const resolveParty = (party) => party?.applicant || party || {};
-
-// PAN of an embedded party, tolerating both field names the records use.
-const partyPan = (party) => {
-  const person = resolveParty(party);
-  return String(person.panNo || person.pan || '').trim().toUpperCase();
-};
+// Party resolution and subject keying live in utils/cibilSubjectKey.js, which
+// mirrors the backend and admin UI rules exactly. Imported rather than
+// re-implemented here so the three copies cannot drift apart.
 
 // Older records carry only a subset of the fields below. Nothing missing may
 // reach the screen as a blank row, "undefined" or "Invalid Date" — the em dash
@@ -180,26 +178,28 @@ export default function ViewLoanApplicationScreen({ route, navigation }) {
   // (admin-frontend/src/utils/cibilSubjects.js — subjectSummary), so mobile and
   // Admin cannot disagree about whose score is whose:
   //
-  //   1. the `cibilSubjects` entry whose PAN is this party's
+  //   1. the `cibilSubjects` entry whose SUBJECT KEY is this party's
   //   2. `cibil`, only when its own subjectPan IS this party
   //   3. `cibil` with NO subjectPan, for the APPLICANT only — the pre-swap rule,
   //      where an unattributed summary meant "the applicant"
   //   4. otherwise nothing at all
   //
-  // There is deliberately no fifth rule: a co-applicant with no report of their
-  // own shows the empty state rather than borrowing the applicant's score.
+  // The key is the party's PAN when they have one and a derived `K:` key over
+  // their identity when they do not, so a PAN-less person — applicant or
+  // co-applicant — still resolves to their own report.
+  //
+  // There is deliberately no fifth rule: a party with no report of their own
+  // shows the empty state rather than borrowing the other person's score.
   const cibil = application.cibil || {};
   const cibilSubjects = Array.isArray(application.cibilSubjects) ? application.cibilSubjects : [];
-  const legacySubjectPan = String(cibil.subjectPan || '').trim().toUpperCase();
+  const legacySubjectPan = normalizePan(cibil.subjectPan);
 
   const summaryFor = (party, isApplicant) => {
-    const pan = partyPan(party);
-    if (pan) {
-      const entry = cibilSubjects.find(
-        (e) => String(e?.subjectPan || '').trim().toUpperCase() === pan
-      );
+    const key = partySubjectKey(party);
+    if (key) {
+      const entry = cibilSubjects.find((e) => normalizePan(e?.subjectPan) === key);
       if (entry) return entry;
-      if (legacySubjectPan && legacySubjectPan === pan) return cibil;
+      if (legacySubjectPan && legacySubjectPan === key) return cibil;
     }
     if (!legacySubjectPan && isApplicant) return cibil;
     return {};

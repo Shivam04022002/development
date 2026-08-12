@@ -31,7 +31,12 @@ import RejectedApplication from "../models/RejectedApplication.js";
 import { fetchCibilReport, sanitizeVendorText } from "./xalerCibilService.js";
 import { getDecryptedCibilConfig } from "./systemSettingsService.js";
 import { createHistoryEntry } from "../controllers/formTrackingController.js";
-import { partySubjectPan, upsertCibilSubject, toCibilSubject } from "../models/cibilSubjectSchemas.js";
+import {
+  partySubjectKey,
+  hasRequiredIdentity,
+  upsertCibilSubject,
+  toCibilSubject,
+} from "../models/cibilSubjectSchemas.js";
 import { writeAppFile } from "../utils/fileStorage.js";
 import { logEvent, logError } from "../utils/log.js";
 
@@ -95,7 +100,7 @@ const defaultFindApplication = async (applicationId) => {
  *
  * Returns a structured outcome; never throws.
  *   { ok:true,  status:"fetched",        subject:"coApplicant", subjectPan, score }
- *   { ok:false, status:"already_exists" | "in_progress" | "missing_pan" |
+ *   { ok:false, status:"already_exists" | "in_progress" | "missing_identity" |
  *                      "no_co_applicant" | "not_found" | "not_configured" |
  *                      "consent_required" | "vendor_failed", ... }
  */
@@ -134,15 +139,31 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
     return { ok: false, status: "no_co_applicant", message: "This application has no co-applicant." };
   }
 
-  // 3 + 4 · canonical PAN, from the STORED record — never from the caller.
-  // Form 60 is not a substitute: the vendor flow is keyed on pan_id and there
-  // is no Form 60 lookup in the integration.
-  const subjectPan = partySubjectPan(coApplicant);
+  // 3 + 4 · identity, from the STORED record — never from the caller.
+  //
+  // PAN is OPTIONAL. What the bureau actually requires is mobile, forename,
+  // surname and date of birth; a missing PAN narrows the match but does not
+  // stop the request, and `pan_id` is simply omitted from the body.
+  //
+  // What IS required is that the subject can be identified, because the report
+  // has to be stored and displayed as belonging to this person and no other.
+  // partySubjectKey gives the PAN when there is one and a derived key over the
+  // supplied identity when there is not.
+  if (!hasRequiredIdentity(coApplicant)) {
+    return {
+      ok: false,
+      status: "missing_identity",
+      message:
+        "Co-applicant CIBIL needs a mobile number, first name, last name and date of birth. PAN is optional.",
+    };
+  }
+
+  const subjectPan = partySubjectKey(coApplicant);
   if (!subjectPan) {
     return {
       ok: false,
-      status: "missing_pan",
-      message: "Co-applicant PAN is required for a CIBIL fetch. Form 60 cannot be used for a bureau lookup.",
+      status: "missing_identity",
+      message: "Co-applicant cannot be identified for a CIBIL fetch.",
     };
   }
 

@@ -37,6 +37,122 @@ export const partySubjectPan = (party) => {
   return normalizePan(p.panNo || p.pan);
 };
 
+/* ── Subject keys when there is no PAN ─────────────────────────────────────
+ *
+ * PAN is optional for a bureau pull: the vendor's required identity is mobile,
+ * forename, surname and date of birth. But `subjectPan` is what makes one
+ * report distinguishable from another — it is the second half of the
+ * { applicationId, subjectPan } unique index, the match key for cibilSubjects,
+ * and how both UIs decide whose score they are showing.
+ *
+ * A PAN-less subject keyed on "" would collide with the legacy "no PAN means
+ * the applicant" convention, and two PAN-less people on one application would
+ * share a single slot — one silently overwriting the other, or being handed
+ * the other's report. So a PAN-less subject gets a DERIVED key instead.
+ *
+ * The derived key is:
+ *   - stable      — same person, same key, on every path and every re-fetch
+ *   - distinct    — prefixed "K:", so it can never equal a PAN (which is
+ *                   [A-Z]{5}[0-9]{4}[A-Z]) nor the legacy empty string
+ *   - opaque      — a digest, so a mobile number and DOB are not carried in a
+ *                   field that is returned to API callers
+ *   - synchronous — the admin and mobile UIs must compute the identical key to
+ *                   match an entry, and cannot await a crypto primitive to do
+ *                   it. This mirrors normalizePan/partyPan, which are already
+ *                   duplicated across the three codebases on the same terms:
+ *                   they must never diverge.
+ */
+
+/** Last ten digits, so +91 / 0 / spacing variants of one number agree. */
+export const normalizeMobile = (v) => {
+  const digits = String(v ?? "").replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+/** Leading YYYY-MM-DD, taken verbatim so no timezone shift can occur. */
+export const normalizeDob = (v) => {
+  const m = String(v ?? "").trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+};
+
+/** Canonical name for keying: trimmed, inner runs of whitespace collapsed, upper-cased. */
+export const normalizeName = (v) => String(v ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * FNV-1a, 32-bit, as eight UPPERCASE hex characters. Not a security primitive
+ * and not used as one — it exists so the key is opaque and cheap to compute
+ * identically in Node and in a browser. Uniqueness only has to hold among the
+ * two or three subjects of ONE application: the applicationId is the other half
+ * of every key, so digests never compete across applications.
+ *
+ * Upper case matters. Every comparison of a stored subjectPan in this repo runs
+ * through normalizePan, which upper-cases; emitting upper-case hex makes that
+ * a no-op on a derived key, so none of those comparisons need to learn about
+ * this at all.
+ */
+export const subjectDigest = (text) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0").toUpperCase();
+};
+
+/** The identity the vendor requires. PAN is deliberately absent from this list. */
+export const partyIdentity = (party) => {
+  const p = party?.applicant || party || {};
+  const name = String(p.name ?? "").trim();
+  const split = name.split(/\s+/).filter(Boolean);
+  const forename = String(p.firstName ?? "").trim() || split[0] || "";
+  const surname =
+    String(p.surname ?? p.lastName ?? "").trim() || (split.length > 1 ? split.slice(1).join(" ") : "");
+  return {
+    forename,
+    surname,
+    mobile: normalizeMobile(p.mobileNumber || p.mobile),
+    dob: normalizeDob(p.dateOfBirth || p.dob),
+  };
+};
+
+/** Can this party be sent to the bureau at all? PAN is not part of the answer. */
+export const hasRequiredIdentity = (party) => {
+  const { forename, surname, mobile, dob } = partyIdentity(party);
+  return Boolean(forename && surname && mobile.length === 10 && dob);
+};
+
+/**
+ * The key this party's report is stored and matched under: the PAN when there
+ * is one — unchanged, so every existing record keeps its key — otherwise a
+ * derived key over the identity that the request actually carried.
+ *
+ * Returns "" when neither is possible; callers must treat that as "cannot
+ * identify this subject" and not fetch, because an unidentifiable report
+ * cannot be stored or displayed safely.
+ */
+/**
+ * The exact string the derived key is hashed from. Exported so the three
+ * copies of this rule — backend, admin UI, mobile app — can be compared field
+ * by field rather than only through their digests.
+ *
+ * All four required identity fields participate: two different people who
+ * happen to share a mobile number (a household line) or a date of birth must
+ * not collide onto one subject key.
+ */
+export const subjectKeySource = (party) => {
+  const { forename, surname, mobile, dob } = partyIdentity(party);
+  return `${mobile}|${normalizeName(forename)}|${normalizeName(surname)}|${dob}`;
+};
+
+export const partySubjectKey = (party) => {
+  const pan = partySubjectPan(party);
+  if (pan) return pan;
+  // The same bar as being allowed to fetch at all: a subject that cannot be
+  // identified cannot be stored or displayed safely, so it gets no key.
+  if (!hasRequiredIdentity(party)) return "";
+  return `K:${subjectDigest(subjectKeySource(party))}`;
+};
+
 const cibilSubjectSchema = new mongoose.Schema(
   {
     // The person this summary belongs to. Empty only for legacy records whose

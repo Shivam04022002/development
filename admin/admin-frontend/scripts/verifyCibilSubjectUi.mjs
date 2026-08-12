@@ -52,7 +52,8 @@ const applicantEntry = { subjectPan: PAN_A, score: 774, requestId: "tu_applicant
 const coEntry = { subjectPan: PAN_B, score: 640, requestId: "tu_co" };
 
 const APPLICANT = { panNo: PAN_A, name: "A" };
-const CO = { panNo: PAN_B, name: "B" };
+// Full identity: PAN is optional for a fetch, but mobile/first/last/DOB are not.
+const CO = { panNo: PAN_B, name: "Bina Rao", mobile: "9876543210", dateOfBirth: "1990-01-01" };
 
 /** Post-2B application: both subjects present. */
 const appBoth = { _id: "a1", applicant: APPLICANT, coApplicant: CO,
@@ -175,10 +176,19 @@ check("hidden for a normal admin", () => {
   assert.equal(r.reason, "not_superadmin");
 });
 
-check("hidden when the co-applicant has no PAN", () => {
+check("hidden when the co-applicant lacks the required identity", () => {
   const r = canFetchCoApplicantCibil({ ...base, coApplicant: { name: "No PAN", form60: "x.jpg" } });
   assert.equal(r.show, false);
-  assert.equal(r.reason, "missing_pan");
+  assert.equal(r.reason, "missing_identity");
+});
+
+check("SHOWN when the co-applicant has no PAN but full identity — PAN is optional", () => {
+  const r = canFetchCoApplicantCibil({
+    ...base,
+    coApplicant: { name: "Asha Verma", mobile: "9876543210", dateOfBirth: "1988-03-14" },
+  });
+  assert.equal(r.show, true, "a missing PAN must no longer hide the action");
+  assert.equal(r.reason, "eligible");
 });
 
 check("hidden when there is no co-applicant", () => {
@@ -231,7 +241,8 @@ check("every documented backend status maps to its own message", () => {
     fetched: "Co-Applicant CIBIL report fetched successfully.",
     already_exists: "Co-Applicant CIBIL report already exists.",
     in_progress: "Co-Applicant CIBIL fetch is already in progress.",
-    missing_pan: "Co-Applicant PAN is missing. CIBIL cannot be fetched.",
+    missing_identity:
+      "Co-Applicant CIBIL needs a mobile number, first name, last name and date of birth. PAN is optional.",
     no_co_applicant: "No co-applicant is available for this application.",
     consent_required: "Co-Applicant consent is required before fetching CIBIL.",
     not_found: "Application or co-applicant was not found.",
@@ -252,7 +263,7 @@ check("only fetched / already_exists count as success and trigger a refresh", ()
   assert.equal(fetchOutcome({ status: "fetched" }).refresh, true);
   assert.equal(fetchOutcome({ status: "already_exists" }).ok, true);
   assert.equal(fetchOutcome({ status: "already_exists" }).refresh, true);
-  for (const s of ["in_progress", "missing_pan", "no_co_applicant", "consent_required",
+  for (const s of ["in_progress", "missing_identity", "no_co_applicant", "consent_required",
                    "not_found", "not_configured", "vendor_failed", "not_retryable"]) {
     assert.equal(fetchOutcome({ status: s }).ok, false, `${s} must not be success`);
     assert.equal(fetchOutcome({ status: s }).refresh, false, `${s} must not refresh`);

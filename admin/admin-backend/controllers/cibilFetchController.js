@@ -27,7 +27,9 @@ const STATUS_CODE = {
   fetched: 200,
   already_exists: 200, // idempotent: the desired state already holds
   in_progress: 409,
-  missing_pan: 400,
+  // PAN is optional for a bureau pull. A 400 now means the co-applicant lacks
+  // the identity the vendor does require: mobile, forename, surname and DOB.
+  missing_identity: 400,
   no_co_applicant: 400,
   consent_required: 403,
   not_found: 404,

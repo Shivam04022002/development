@@ -28,6 +28,80 @@ export const partyPan = (party) => {
   return normalizePan(p.panNo || p.pan);
 };
 
+/* ── Subject keys when there is no PAN ─────────────────────────────────────
+ * PAN is optional for a bureau pull, so a subject may be stored under a
+ * DERIVED key instead. These four helpers mirror cibilSubjectSchemas.js on the
+ * backend character for character; like normalizePan and partyPan above, they
+ * are duplicated deliberately and must never diverge — a mismatch here would
+ * silently fail to find a report that exists, or find the wrong one.
+ */
+
+/** Last ten digits, so +91 / 0 / spacing variants of one number agree. */
+export const normalizeMobile = (v) => {
+  const digits = String(v ?? "").replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+};
+
+/** Leading YYYY-MM-DD, taken verbatim so no timezone shift can occur. */
+export const normalizeDob = (v) => {
+  const m = String(v ?? "").trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+};
+
+/** Canonical name for keying: trimmed, inner runs of whitespace collapsed, upper-cased. */
+export const normalizeName = (v) => String(v ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * FNV-1a, 32-bit, eight UPPERCASE hex characters. Not a security primitive.
+ * Upper case so that normalizePan — which every comparison below runs through —
+ * is a no-op on a derived key.
+ */
+export const subjectDigest = (text) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0").toUpperCase();
+};
+
+/** The identity the vendor requires. PAN is deliberately absent from this list. */
+export const partyIdentity = (party) => {
+  const p = party?.applicant || party || {};
+  const name = String(p.name ?? "").trim();
+  const split = name.split(/\s+/).filter(Boolean);
+  const forename = String(p.firstName ?? "").trim() || split[0] || "";
+  const surname =
+    String(p.surname ?? p.lastName ?? "").trim() ||
+    (split.length > 1 ? split.slice(1).join(" ") : "");
+  return {
+    forename,
+    surname,
+    mobile: normalizeMobile(p.mobileNumber || p.mobile),
+    dob: normalizeDob(p.dateOfBirth || p.dob),
+  };
+};
+
+/** Can this party be sent to the bureau at all? PAN is not part of the answer. */
+export const hasRequiredIdentity = (party) => {
+  const { forename, surname, mobile, dob } = partyIdentity(party);
+  return Boolean(forename && surname && mobile.length === 10 && dob);
+};
+
+/** The exact string the derived key is hashed from. All four fields participate. */
+export const subjectKeySource = (party) => {
+  const { forename, surname, mobile, dob } = partyIdentity(party);
+  return `${mobile}|${normalizeName(forename)}|${normalizeName(surname)}|${dob}`;
+};
+
+/** The key this party's report is stored under: PAN when present, else derived. */
+export const partySubjectKey = (party) => {
+  const pan = partyPan(party);
+  if (pan) return pan;
+  if (!hasRequiredIdentity(party)) return "";
+  return `K:${subjectDigest(subjectKeySource(party))}`;
+};
+
 /** A party actually exists on the record. */
 export const hasParty = (party) =>
   Boolean(party && typeof party === "object" && Object.keys(party).length > 0);
@@ -58,7 +132,9 @@ export const hasReport = (summary) =>
  * and build a subject-scoped URL from one call.
  */
 export function subjectSummary(app, party, isApplicant) {
-  const pan = partyPan(party);
+  // The subject key, not merely the PAN: a party with no PAN may still own a
+  // report, stored under the derived key. normalizePan is a no-op on one.
+  const pan = partySubjectKey(party);
   const list = Array.isArray(app?.cibilSubjects) ? app.cibilSubjects : [];
   const legacy = app?.cibil || {};
   const legacyPan = normalizePan(legacy.subjectPan);
@@ -110,7 +186,10 @@ export const cibilReportPath = (applicationId, path, subjectPan) => {
 export function canFetchCoApplicantCibil({ isSuperAdmin, coApplicant, coApplicantSummary, busy }) {
   if (!isSuperAdmin) return { show: false, reason: "not_superadmin" };
   if (!hasParty(coApplicant)) return { show: false, reason: "no_co_applicant" };
-  if (!partyPan(coApplicant)) return { show: false, reason: "missing_pan" };
+  // PAN is optional. What the bureau requires is mobile, first name, last name
+  // and date of birth — offering the action without those would spend a
+  // billable call on a request the vendor cannot match.
+  if (!hasRequiredIdentity(coApplicant)) return { show: false, reason: "missing_identity" };
   if (hasReport(coApplicantSummary)) return { show: false, reason: "already_fetched" };
   return { show: true, disabled: Boolean(busy), reason: "eligible" };
 }
@@ -123,7 +202,9 @@ export const FETCH_MESSAGES = {
   fetched: "Co-Applicant CIBIL report fetched successfully.",
   already_exists: "Co-Applicant CIBIL report already exists.",
   in_progress: "Co-Applicant CIBIL fetch is already in progress.",
-  missing_pan: "Co-Applicant PAN is missing. CIBIL cannot be fetched.",
+  // PAN is optional; these are the fields the bureau actually needs.
+  missing_identity:
+    "Co-Applicant CIBIL needs a mobile number, first name, last name and date of birth. PAN is optional.",
   no_co_applicant: "No co-applicant is available for this application.",
   consent_required: "Co-Applicant consent is required before fetching CIBIL.",
   not_found: "Application or co-applicant was not found.",

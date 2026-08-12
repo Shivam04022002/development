@@ -399,15 +399,50 @@ await acheck("a coapplicant_cibil_request event is emitted per real invocation",
 
 console.log("\nvalidation");
 
-// Test 6
-await acheck("co-applicant without PAN → no reservation, no Xaler, validation error", async () => {
+// Test 6 — PAN is optional; the bureau's required identity is not.
+await acheck("co-applicant with neither PAN nor identity → no reservation, no Xaler", async () => {
   const reports = fakeReports();
   const t = baseDeps({ app: fakeApp({ coApplicant: { name: "No Pan", form60: "img.jpg" } }), reports });
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
-  assert.equal(out.status, "missing_pan");
+  assert.equal(out.status, "missing_identity");
   assert.equal(t.vendor.calls.length, 0);
   assert.equal(reports.rows.length, 0, "no placeholder row created");
-  assert.match(out.message, /Form 60/, "explains Form 60 is not a substitute");
+  assert.match(out.message, /mobile number, first name, last name and date of birth/);
+  assert.match(out.message, /PAN is optional/);
+});
+
+await acheck("co-applicant with NO PAN but full identity → the fetch proceeds", async () => {
+  const reports = fakeReports();
+  const t = baseDeps({
+    app: fakeApp({
+      coApplicant: {
+        name: "Asha Verma",
+        mobile: "9876543210",
+        dateOfBirth: "1988-03-14",
+        form60: "img.jpg",
+      },
+    }),
+    reports,
+  });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(t.vendor.calls.length, 1, "a missing PAN no longer blocks the request");
+  assert.equal(out.ok, true);
+  assert.match(out.subjectPan, /^K:[0-9A-F]{8}$/, "stored under a derived key, not an empty one");
+});
+
+await acheck("each required identity field is genuinely required", async () => {
+  const full = { name: "Asha Verma", mobile: "9876543210", dateOfBirth: "1988-03-14" };
+  for (const missing of ["name", "mobile", "dateOfBirth"]) {
+    const coApplicant = { ...full };
+    delete coApplicant[missing];
+    const t = baseDeps({ app: fakeApp({ coApplicant }) });
+    const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+    assert.equal(out.status, "missing_identity", `missing ${missing} must block`);
+    assert.equal(t.vendor.calls.length, 0, `no paid call without ${missing}`);
+  }
+  // A single-word name has no surname, so it cannot satisfy the requirement.
+  const t = baseDeps({ app: fakeApp({ coApplicant: { ...full, name: "Asha" } }) });
+  assert.equal((await fetchCoApplicantCibil(APP_ID, t.deps)).status, "missing_identity");
 });
 
 // Test 16
@@ -435,14 +470,14 @@ await acheck("CIBIL not configured → not_configured, no Xaler", async () => {
 
 // Test 7
 await acheck("co-applicant PAN is normalised to the canonical subject key", async () => {
-  const t = baseDeps({ app: fakeApp({ coApplicant: { panNo: "  zzzzz9999z  ", name: "Co" } }) });
+  const t = baseDeps({ app: fakeApp({ coApplicant: { panNo: "  zzzzz9999z  ", name: "Co Applicant", dateOfBirth: "1980-01-01", mobile: "9990001111" } }) });
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
   assert.equal(out.subjectPan, PAN_COAPP, "trimmed and upper-cased");
   assert.equal(t.reports.rows[0].subjectPan, PAN_COAPP, "stored canonically");
 });
 
 await acheck("legacy nested co-applicant shape resolves to the same subject", async () => {
-  const t = baseDeps({ app: fakeApp({ coApplicant: { applicant: { panNo: PAN_COAPP, name: "Co" } } }) });
+  const t = baseDeps({ app: fakeApp({ coApplicant: { applicant: { panNo: PAN_COAPP, name: "Co Applicant", dateOfBirth: "1980-01-01", mobile: "9990001111" } } }) });
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
   assert.equal(out.subjectPan, PAN_COAPP);
 });

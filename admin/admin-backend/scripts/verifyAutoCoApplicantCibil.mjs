@@ -91,7 +91,7 @@ const makeApp = (over = {}) => ({
   status: "pending",
   workflowStage: "pending cibil",
   applicant: { name: "A", panNo: APPLICANT_PAN },
-  coApplicant: { name: "B", panNo: CO_PAN },
+  coApplicant: { name: "Bina Rao", panNo: CO_PAN, mobile: "9876500002", dateOfBirth: "1990-01-01" },
   cibil: { score: 800, subjectPan: APPLICANT_PAN, state: "" },
   cibilSubjects: [{ subjectPan: APPLICANT_PAN, score: 800, state: "" }],
   ...over,
@@ -172,13 +172,13 @@ await acheck("2 · applicant only → the service decides, and no vendor call ha
   assert.equal(t.events.length, 0, "and nothing is written to the timeline");
 });
 
-await acheck("3 · co-applicant without a PAN → no Xaler call, no reservation", async () => {
+await acheck("3 · co-applicant without PAN or identity → no Xaler call, no reservation", async () => {
   const reports = fakeReports();
   const t = baseDeps({ app: makeApp({ coApplicant: { name: "B" } }), reports });
   let vendorCalls = 0;
   t.deps.fetchReport = async () => { vendorCalls += 1; return { ok: true }; };
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
-  assert.equal(out.status, "missing_pan");
+  assert.equal(out.status, "missing_identity");
   assert.equal(vendorCalls, 0, "no paid request without a PAN to key it on");
   assert.equal(reports.rows.length, 0, "and no reservation row is left behind");
 });
@@ -334,7 +334,7 @@ await acheck("10 · a different subject on the same application is allowed", asy
   await fetchCoApplicantCibil(APP_ID, a.deps);
 
   // The co-applicant is replaced by a different person on the same application.
-  app.coApplicant = { name: "C", panNo: "CCCCC3333C" };
+  app.coApplicant = { name: "Chandra Iyer", panNo: "CCCCC3333C", mobile: "9876500003", dateOfBirth: "1991-02-02" };
   const b = baseDeps({ app, reports, vendor: count });
   const out = await fetchCoApplicantCibil(APP_ID, b.deps);
 
@@ -375,7 +375,7 @@ console.log("\nstorage and applicant isolation");
 await acheck("13 · the report is stored under applicationId + normalised co-applicant PAN", async () => {
   const reports = fakeReports();
   // Messy casing/whitespace on the stored record must still normalise.
-  const app = makeApp({ coApplicant: { name: "B", panNo: `  ${CO_PAN.toLowerCase()} ` } });
+  const app = makeApp({ coApplicant: { name: "Bina Rao", panNo: `  ${CO_PAN.toLowerCase()} `, mobile: "9876500002", dateOfBirth: "1990-01-01" } });
   const t = baseDeps({ app, reports });
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
 
@@ -575,7 +575,7 @@ await acheck("28 · a failure event is recorded with its category", async () => 
 
 await acheck("29 · no sensitive value reaches the timeline", async () => {
   const t = baseDeps({
-    app: makeApp({ coApplicant: { name: "Sensitive Name", panNo: CO_PAN, aadharNo: "123456789012", dateOfBirth: "1975-07-05" } }),
+    app: makeApp({ coApplicant: { name: "Sensitive Name", panNo: CO_PAN, mobile: "9876500002", aadharNo: "123456789012", dateOfBirth: "1975-07-05" } }),
     vendor: async () => ({
       ok: false,
       reason: `PAN ${CO_PAN} / aadhaar 123456789012 / dob 1975-07-05 not found`,
