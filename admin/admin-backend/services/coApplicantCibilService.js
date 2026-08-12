@@ -161,7 +161,10 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
     return { ok: false, status: "not_configured", message: "CIBIL is not configured." };
   }
 
-  await hist("CO_APPLICANT_CIBIL_FETCH_REQUESTED", "Co-applicant CIBIL requested by admin");
+  // The remark does not name the actor: `updatedBy` already carries it, and it
+  // is no longer always an admin — the same service now also runs automatically
+  // after application submission, where the actor is the system.
+  await hist("CO_APPLICANT_CIBIL_FETCH_REQUESTED", "Co-applicant CIBIL requested");
 
   // 6 · atomic reservation. The upsert either inserts (pre-image null → we own
   // the subject) or matches an existing row (someone else owns it). The unique

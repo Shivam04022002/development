@@ -13,11 +13,71 @@ import Admin from "../models/Admin.js";
 import Branch from "../models/Branch.js";
 import { toStage, normalizeWorkflows, WORKFLOW_STAGES, PENDING_CIBIL_STAGE } from "../utils/workflowConstants.js";
 import { processApplicationCibil } from "./cibilProcessingService.js";
+import { fetchCoApplicantCibil } from "./coApplicantCibilService.js";
 import { createHistoryEntry } from "../controllers/formTrackingController.js";
 import { organizeApplicationFiles } from "../utils/appFileStorage.js";
-import { logEvent } from "../utils/log.js";
+import { logEvent, logError } from "../utils/log.js";
 
 const DEFAULT_START_STAGE = WORKFLOW_STAGES[0]; // "contact creation"
+
+/**
+ * startCoApplicantCibil(applicationId, deps) — begin the co-applicant bureau
+ * fetch WITHOUT holding up the caller.
+ *
+ * This is orchestration only. Every decision — is there a co-applicant, is
+ * there a PAN, is consent required, is a fetch already in flight, what does a
+ * vendor failure mean — belongs to coApplicantCibilService and is deliberately
+ * not duplicated here. That service stays the single source of truth for
+ * co-applicant CIBIL, shared verbatim with the manual Super Admin endpoint.
+ * The HTTP route is NOT called internally: its requireSuperAdmin guard exists
+ * for the manual action and is neither bypassed nor weakened.
+ *
+ * Two properties this function must guarantee:
+ *
+ *   1. It never rejects and never throws. A bureau problem is not an
+ *      application-creation problem, so nothing here can reach the dealer's
+ *      submit response or leave an unhandled rejection.
+ *   2. It returns immediately. The returned promise is a handle for tests;
+ *      production intentionally drops it, so the vendor round trip — which can
+ *      outlast the mobile client's timeout — happens after the response.
+ *
+ * No queue, worker, cron or external dependency is introduced: the detached
+ * promise is the whole mechanism.
+ */
+export function startCoApplicantCibil(applicationId, deps = {}) {
+  const {
+    fetchCoApplicant = fetchCoApplicantCibil,
+    log = logEvent,
+    onError = logError,
+    actor = "System (automatic)",
+  } = deps;
+
+  return (async () => {
+    try {
+      const outcome = await fetchCoApplicant(applicationId, { actor });
+      // One line per automatic attempt, whatever the outcome, so "did the
+      // automation run, and what did it decide?" is answerable from the log.
+      // `status` already distinguishes no_co_applicant / missing_pan (skipped,
+      // no vendor call) from fetched / already_exists / in_progress / the
+      // failure statuses. No PAN, score, name or vendor payload is logged.
+      log("coapplicant_cibil_auto", {
+        applicationId: String(applicationId),
+        ok: Boolean(outcome?.ok),
+        status: outcome?.status || "unknown",
+        retryability: outcome?.retryability,
+      });
+      return outcome;
+    } catch (err) {
+      // fetchCoApplicantCibil is documented never to throw. If it ever does,
+      // it is swallowed here rather than surfacing as an unhandled rejection.
+      onError("coapplicant_cibil_auto_threw", {
+        applicationId: String(applicationId),
+        error: err?.message,
+      });
+      return { ok: false, status: "error" };
+    }
+  })();
+}
 
 function asPlain(doc) {
   return doc?.toObject ? doc.toObject() : doc;
@@ -250,6 +310,22 @@ export async function createApplication(payload = {}) {
   // CIBIL". It may set status to "rejected" (low score + auto-reject) or
   // "pending_cibil" and returns the dealer-facing outcome.
   const cibilOutcome = await processApplicationCibil(created);
+
+  // ── Co-applicant CIBIL — automatic, detached ───────────────────────────
+  // Started only after the applicant flow has finished, not alongside it.
+  // Both paths write `cibilSubjects`, and the co-applicant path re-reads the
+  // application and then $sets the whole array; overlapping them would let the
+  // co-applicant's write, built from a snapshot taken before its vendor call,
+  // clobber the applicant entry the applicant flow had just added. Sequencing
+  // removes that lost update entirely — by the time this reads, the applicant
+  // entry is already stored — and costs the dealer nothing, because the
+  // applicant fetch was awaited here before this change too.
+  //
+  // Deliberately not awaited: the response returns now and the bureau round
+  // trip continues in the background. Eligibility, duplicate protection and
+  // failure handling all live in the service. Nothing it returns can alter the
+  // application's status, stage or eligibility.
+  startCoApplicantCibil(created._id);
 
   return {
     success: true,
