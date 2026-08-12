@@ -34,6 +34,36 @@ function validate({ approvedAmount, loanNumber, disbursementDate }) {
   return errors;
 }
 
+/**
+ * A labelled, required field.
+ *
+ * Declared at MODULE scope, and it must stay there. React identifies a
+ * component by its function reference, so a component defined inside another
+ * component's body is a different type on every render: React cannot reconcile
+ * it against the previous tree and instead unmounts the old subtree and mounts
+ * a fresh one. That threw away and recreated the <input> DOM nodes on every
+ * keystroke, so the caret left the field after a single character.
+ *
+ * The error text is passed in as a prop rather than read from a closure over
+ * the parent's `errors` state — that closure is the only reason this was ever
+ * written inside the component.
+ */
+function Field({ label, error, hint, children }) {
+  return (
+    <div style={S.field}>
+      <label style={S.label}>
+        {label} <span style={S.required}>*</span>
+      </label>
+      {children}
+      {error ? (
+        <div style={S.fieldError}>{error}</div>
+      ) : hint ? (
+        <div style={S.hint}>{hint}</div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function DisbursementModal({ open, onCancel, onConfirm, formId }) {
   const [form, setForm] = useState({ approvedAmount: "", loanNumber: "", disbursementDate: "" });
   const [errors, setErrors] = useState({});
@@ -97,16 +127,6 @@ export default function DisbursementModal({ open, onCancel, onConfirm, formId })
     }
   };
 
-  const Field = ({ label, name, children, hint }) => (
-    <div style={S.field}>
-      <label style={S.label}>
-        {label} <span style={S.required}>*</span>
-      </label>
-      {children}
-      {errors[name] ? <div style={S.fieldError}>{errors[name]}</div> : hint ? <div style={S.hint}>{hint}</div> : null}
-    </div>
-  );
-
   return (
     <div style={S.backdrop} onClick={() => !busy && onCancel()}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -116,7 +136,7 @@ export default function DisbursementModal({ open, onCancel, onConfirm, formId })
           These details are saved before the application is marked Disbursed.
         </p>
 
-        <Field label="Approved Amount" name="approvedAmount" hint="Amount actually sanctioned, in rupees.">
+        <Field label="Approved Amount" error={errors.approvedAmount} hint="Amount actually sanctioned, in rupees.">
           <input
             ref={firstFieldRef}
             type="number"
@@ -131,7 +151,7 @@ export default function DisbursementModal({ open, onCancel, onConfirm, formId })
           />
         </Field>
 
-        <Field label="Loan Number" name="loanNumber">
+        <Field label="Loan Number" error={errors.loanNumber}>
           <input
             type="text"
             placeholder="LN-2026-000123"
@@ -142,7 +162,7 @@ export default function DisbursementModal({ open, onCancel, onConfirm, formId })
           />
         </Field>
 
-        <Field label="Disbursement Date" name="disbursementDate">
+        <Field label="Disbursement Date" error={errors.disbursementDate}>
           <input
             type="date"
             value={form.disbursementDate}
