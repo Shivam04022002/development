@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /** Extensions we can render inline as an image. */
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp"];
@@ -90,6 +90,14 @@ const authHeaders = () => {
 const FilePreview = ({ src, alt, style }) => {
   const [hasError, setHasError] = useState(false);
   const [blobUrl, setBlobUrl] = useState("");
+  /** Message shown under the PDF link when a preview cannot be opened. */
+  const [pdfError, setPdfError] = useState("");
+  /**
+   * Object URLs handed to a new tab. They cannot be revoked immediately — the
+   * tab needs time to load them — so they are revoked on a timer and any still
+   * outstanding are released when this component unmounts.
+   */
+  const pdfObjectUrls = useRef([]);
 
   const fileUrl = normalizeFileUrl(src);
   const authed = needsAuth(src);
@@ -123,7 +131,74 @@ const FilePreview = ({ src, alt, style }) => {
     };
   }, [src, fileUrl, authed, renderable]);
 
+  /** Release any object URL still outstanding when this preview goes away. */
+  useEffect(() => {
+    const urls = pdfObjectUrls.current;
+    return () => {
+      urls.forEach((u) => URL.revokeObjectURL(u));
+      urls.length = 0;
+    };
+  }, []);
+
   if (!src) return null;
+
+  /**
+   * Open a PDF using the admin's own session.
+   *
+   * This previously handed the URL to docs.google.com/gview. That could never
+   * work: /api/files is bearer-authenticated, Google fetches from its own
+   * servers with none of our credentials, and so received 401 JSON rather than
+   * a PDF — which is what "No preview available" was reporting. Making the
+   * documents publicly fetchable to satisfy it is not an option; these are
+   * Aadhaar and PAN scans.
+   *
+   * So the fetch happens here instead, with the same token the image path
+   * already uses, and the browser renders the result natively from a blob.
+   */
+  const openPdfAuthenticated = async () => {
+    setPdfError("");
+    try {
+      const response = await fetch(fileUrl, {
+        mode: authed ? "same-origin" : "cors",
+        headers: authed ? authHeaders() : undefined,
+      });
+
+      if (!response.ok) {
+        // Deliberately not logging the status body, the URL or the header —
+        // the path identifies a customer's document.
+        setPdfError(
+          response.status === 401 || response.status === 403
+            ? "You are not authorised to view this document. Sign in again and retry."
+            : response.status === 404
+            ? "This document could not be found."
+            : "The document could not be opened. Please try again."
+        );
+        return;
+      }
+
+      // A protected route answering with HTML or JSON means something other
+      // than the file came back; do not hand that to the PDF viewer.
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("application/pdf")) {
+        setPdfError("This file is not a PDF, so it was not opened.");
+        return;
+      }
+
+      const url = URL.createObjectURL(await response.blob());
+      pdfObjectUrls.current.push(url);
+
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (!opened) setPdfError("Your browser blocked the preview window. Allow pop-ups and retry.");
+
+      // Long enough for the new tab to load, short enough not to leak.
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        pdfObjectUrls.current = pdfObjectUrls.current.filter((u) => u !== url);
+      }, 60_000);
+    } catch {
+      setPdfError("The document could not be opened. Please try again.");
+    }
+  };
 
   /** Open the file in a new tab. */
   const handleClick = (e) => {
@@ -131,8 +206,7 @@ const FilePreview = ({ src, alt, style }) => {
     e.stopPropagation();
 
     if (isPDF(fileUrl)) {
-      const googleViewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
-      window.open(googleViewerUrl, "_blank", "noopener,noreferrer");
+      openPdfAuthenticated();
       return;
     }
 
@@ -175,8 +249,9 @@ const FilePreview = ({ src, alt, style }) => {
           cursor: "pointer",
           color: "#2563eb",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
-          gap: "8px",
+          gap: "6px",
           justifyContent: "center",
           width: style?.width ?? "100%",
           height: style?.height ?? "100%",
@@ -185,8 +260,15 @@ const FilePreview = ({ src, alt, style }) => {
         onClick={handleClick}
         title={`View ${alt} PDF in new tab`}
       >
-        <span style={{ fontSize: "24px" }}>📄</span>
-        <span style={{ fontWeight: "bold", textDecoration: "underline" }}>View PDF</span>
+        <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "24px" }}>📄</span>
+          <span style={{ fontWeight: "bold", textDecoration: "underline" }}>View PDF</span>
+        </span>
+        {pdfError ? (
+          <span style={{ fontSize: 11.5, color: "#b91c1c", fontWeight: 600, textAlign: "center" }}>
+            {pdfError}
+          </span>
+        ) : null}
       </div>
     );
   }
