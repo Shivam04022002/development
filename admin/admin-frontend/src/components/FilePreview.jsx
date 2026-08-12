@@ -158,8 +158,14 @@ const FilePreview = ({ src, alt, style }) => {
   const openPdfAuthenticated = async () => {
     setPdfError("");
     try {
+      // No `mode` option, deliberately. The SPA is served from v2admin… while
+      // the API lives on v2adminapi…, so these requests are cross-origin;
+      // mode: "same-origin" makes fetch reject with a TypeError before any
+      // request is sent, which is what produced "The document could not be
+      // opened". The default mode is "cors", which is what the image path
+      // above has always relied on, and the API returns the matching
+      // access-control-allow-origin for this SPA.
       const response = await fetch(fileUrl, {
-        mode: authed ? "same-origin" : "cors",
         headers: authed ? authHeaders() : undefined,
       });
 
@@ -221,23 +227,47 @@ const FilePreview = ({ src, alt, style }) => {
   /**
    * Open via a fetched blob URL so the browser displays the file inline
    * instead of downloading it, sending the admin token when required.
+   *
+   * No `mode` option, for the same reason as openPdfAuthenticated: the API is
+   * cross-origin, so "same-origin" would reject before sending anything.
+   *
+   * On failure this no longer falls back to window.open(fileUrl). That opened
+   * the protected /api/files URL with no Authorization header, so the admin
+   * got a 401 JSON page instead of the document — and it hid the real error
+   * behind something that looked like it had worked.
    */
   const handleOpenAsBlob = async (e) => {
     e.preventDefault();
     e.stopPropagation();
 
+    setPdfError("");
     try {
       const response = await fetch(fileUrl, {
-        mode: authed ? "same-origin" : "cors",
         headers: authed ? authHeaders() : undefined,
       });
-      if (!response.ok) throw new Error("Fetch failed");
+      if (!response.ok) {
+        setPdfError(
+          response.status === 401 || response.status === 403
+            ? "You are not authorised to view this document. Sign in again and retry."
+            : response.status === 404
+            ? "This document could not be found."
+            : "The document could not be opened. Please try again."
+        );
+        return;
+      }
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const url = URL.createObjectURL(await response.blob());
+      pdfObjectUrls.current.push(url);
+
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (!opened) setPdfError("Your browser blocked the preview window. Allow pop-ups and retry.");
+
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        pdfObjectUrls.current = pdfObjectUrls.current.filter((u) => u !== url);
+      }, 60_000);
     } catch {
-      window.open(fileUrl, "_blank", "noopener,noreferrer");
+      setPdfError("The document could not be opened. Please try again.");
     }
   };
 
@@ -313,6 +343,14 @@ const FilePreview = ({ src, alt, style }) => {
         >
           Open File
         </button>
+        {/* Open File no longer falls back to opening the protected URL
+            unauthenticated, so a failure has to be reported here or it would
+            be silent. */}
+        {pdfError ? (
+          <span style={{ fontSize: 10.5, color: "#b91c1c", fontWeight: 600, textAlign: "center", lineHeight: 1.25 }}>
+            {pdfError}
+          </span>
+        ) : null}
       </div>
     );
   }
