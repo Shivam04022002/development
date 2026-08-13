@@ -29,6 +29,17 @@ const BRAND = {
 
 const PIE_COLORS = [BRAND.orange, BRAND.green, BRAND.red];
 
+/**
+ * How many 100-row pages an export will walk before giving up.
+ *
+ * Exports are the one place that still needs every matching row, so they page
+ * through the list rather than asking for it all at once. The cap exists to
+ * stop a runaway loop, not to bound the export: reaching it raises an error,
+ * because a spreadsheet that is quietly missing rows is worse than one that
+ * failed to download.
+ */
+const EXPORT_PAGE_CAP = 100;
+
 // Built-in branch list. Branches created via "+ Add Branch" are loaded from the
 // API and appended to these.
 const DEFAULT_BRANCHES = [
@@ -233,7 +244,16 @@ const StatsDashboard = ({ fetchStats, fetchAllFiles, setTab, setFilesTab }) => {
       (data?.items || []).forEach((r) => rows.push(r));
       pages = Number(data?.pages) || 1;
       page += 1;
-    } while (page <= pages && page <= 100);
+    } while (page <= pages && page <= EXPORT_PAGE_CAP);
+
+    // A partial export that looks complete is worse than no export: the file
+    // would open fine and quietly be missing rows. Fail loudly instead.
+    if (page <= pages) {
+      throw new Error(
+        `This export covers more than ${EXPORT_PAGE_CAP * 100} records (${type}). ` +
+        `Narrow the date range and export again.`
+      );
+    }
     return rows;
   }, [rangeFrom, rangeTo]);
 
@@ -878,7 +898,16 @@ const SuperAdminDashboard = () => {
       (data?.items || []).forEach((r) => rows.push(r));
       pages = Number(data?.pages) || 1;
       page += 1;
-    } while (page <= pages && page <= 100);
+    } while (page <= pages && page <= EXPORT_PAGE_CAP);
+
+    // See fetchRowsForExport: never hand back a short export as if it were the
+    // whole set.
+    if (page <= pages) {
+      throw new Error(
+        `This export covers more than ${EXPORT_PAGE_CAP * 100} records (${type}). ` +
+        `Narrow the filter and export again.`
+      );
+    }
     return rows;
   }, []);
 
@@ -891,8 +920,12 @@ const SuperAdminDashboard = () => {
       ]);
       return { pending, approved, rejected };
     } catch (err) {
+      // Deliberately rethrown rather than answered with empty arrays: the
+      // caller would have written those straight into a spreadsheet and handed
+      // the operator an empty export that looked successful. handleExport
+      // catches this and surfaces the message.
       console.error("fetchAllFilesAll failed", err?.response?.data || err.message);
-      return { pending: [], approved: [], rejected: [] };
+      throw err;
     }
   }, [fetchFilesForExport]);
 

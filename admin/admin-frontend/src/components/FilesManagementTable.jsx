@@ -227,9 +227,15 @@ export default function FilesManagementTable({
       enableSorting: false,
       size: 42,
     },
+    /* Sorting is the server's job now, and the server sorts by createdAt only —
+     * that is the one field indexed for it. These columns therefore carry
+     * enableSorting: false so their headers stay inert: with manualSorting on,
+     * a clickable header here would show a sort arrow, reorder nothing, and
+     * read as a broken control. Created keeps its header, wired to `dir`. */
     {
       accessorKey: "formId",
       header: "App ID",
+      enableSorting: false,
       cell: (info) => (
         <span style={{ fontWeight: 700, color: BRAND.blue, fontSize: 12 }}>
           {info.getValue() || "—"}
@@ -241,6 +247,7 @@ export default function FilesManagementTable({
       id: "applicantName",
       header: "Customer Name",
       accessorFn: getApplicantName,
+      enableSorting: false,
       size: 160,
       cell: (info) => <span style={{ fontWeight: 600 }}>{info.getValue()}</span>,
     },
@@ -248,24 +255,28 @@ export default function FilesManagementTable({
       id: "dealerName",
       header: "Dealer Name",
       accessorFn: getDealerName,
+      enableSorting: false,
       size: 150,
     },
     {
       id: "branch",
       header: "Branch",
       accessorFn: getDealerBranch,
+      enableSorting: false,
       size: 120,
     },
     {
       id: "district",
       header: "District",
       accessorFn: getDealerDistrict,
+      enableSorting: false,
       size: 120,
     },
     {
       id: "stage",
       header: "Stage",
       accessorFn: getStage,
+      enableSorting: false,
       size: 160,
       cell: (info) => (
         <span style={{
@@ -349,6 +360,24 @@ export default function FilesManagementTable({
    * so a selection made on page 1 is still exportable and still actionable
    * after paging to page 3.
    */
+  /* ── sorting ──
+   *
+   * Controlled from the hook rather than held inside TanStack, because the
+   * reorder happens in the database: the header only chooses a direction on
+   * createdAt, which is sent as `dir` and changes which rows page 1 contains.
+   * Keeping it in TanStack's own state would move the arrow without moving the
+   * data. Clearing the sort falls back to the server default, desc. */
+  const sorting = useMemo(
+    () => [{ id: "createdAt", desc: files.dir !== "asc" }],
+    [files.dir]
+  );
+
+  const handleSortingChange = useCallback((updater) => {
+    const next = typeof updater === "function" ? updater(sorting) : updater;
+    const createdAt = (next || []).find((s) => s.id === "createdAt");
+    files.setDir(createdAt ? (createdAt.desc ? "desc" : "asc") : "desc");
+  }, [sorting, files]);
+
   const handleRowSelectionChange = useCallback((updater) => {
     setRowSelection((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -377,8 +406,9 @@ export default function FilesManagementTable({
     // otherwise a search/sort that reorders rows moves the checkbox onto a
     // different application.
     getRowId: (row) => row._id || row.formId,
-    state: { rowSelection },
+    state: { rowSelection, sorting },
     onRowSelectionChange: handleRowSelectionChange,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     // Sorting, filtering and paging are all done by the database now. Leaving
     // the client row models in would have TanStack re-sort and re-paginate the

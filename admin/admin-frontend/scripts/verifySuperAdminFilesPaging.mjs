@@ -105,13 +105,22 @@ check("page sizes stay within the server's ceiling of 100", () => {
 console.log("\nthe hook asks the server, one page at a time");
 
 check("the list request always carries page and limit", () => {
-  assert.match(hookCode, /params:\s*\{\s*\.\.\.filterParams,\s*page,\s*limit:\s*pageSize\s*\}/,
+  assert.match(hookCode, /params:\s*\{\s*\.\.\.filterParams,\s*page,\s*limit:\s*pageSize\b/,
     "without page/limit the server returns the legacy unbounded array");
 });
 
+check("the list request carries the sort direction", () => {
+  assert.match(hookCode, /params:\s*\{[^}]*\bdir\b[^}]*\}/,
+    "the header would otherwise move the arrow without reordering the data");
+});
+
 check("a filter change returns the operator to page 1", () => {
-  assert.match(hookCode, /setPage\(1\);\s*\}, \[filterKey, type, pageSize\]/,
-    "otherwise a narrowed filter leaves them on an out-of-range page");
+  const m = /setPage\(1\);\s*\}, \[([^\]]*)\]/.exec(hookCode);
+  assert.ok(m, "the page-reset effect is missing");
+  for (const dep of ["filterKey", "type", "pageSize", "dir"]) {
+    assert.ok(m[1].includes(dep),
+      `${dep} must reset the page — otherwise it leaves the operator on an out-of-range page`);
+  }
 });
 
 check("out-of-order responses cannot repaint the table", () => {
@@ -129,10 +138,70 @@ check("facets are fetched over the filter but NOT the page", () => {
     "depending on `page` would change the dropdown options as the operator pages");
 });
 
+/* The export loops live in the page, not the hook: the hook owns one page of
+ * one type, while an export spans every page and (for "all") every type. */
 check("the export path pages through at limit 100 and is capped", () => {
-  assert.match(hookCode, /limit:\s*100/);
-  assert.match(hookCode, /maxPages/, "a runaway loop is bounded");
-  assert.match(hookCode, /truncated/, "and truncation is reported, not silent");
+  assert.match(pageCode, /limit:\s*100/, "exports page through rather than asking for everything");
+  assert.match(pageCode, /EXPORT_PAGE_CAP/, "a runaway loop is bounded");
+  assert.match(pageCode, /const EXPORT_PAGE_CAP = \d+/, "the cap is a named constant");
+});
+
+check("reaching the export cap raises, and never returns a short file", () => {
+  // Both loops must test the cap and then throw — a spreadsheet quietly missing
+  // rows is worse than a failed download.
+  const loops = pageCode.match(/while \(page <= pages && page <= EXPORT_PAGE_CAP\);[\s\S]{0,400}?\n  \}, \[/g) || [];
+  assert.equal(loops.length, 2, `expected both export loops, found ${loops.length}`);
+  for (const loop of loops) {
+    assert.match(loop, /if \(page <= pages\)/, "the cap is detected");
+    assert.match(loop, /throw new Error/, "and raised, not swallowed");
+  }
+});
+
+check("a failed export is not answered with empty arrays", () => {
+  const m = /const fetchAllFilesAll = useCallback\([\s\S]*?\n  \}, \[/.exec(pageCode);
+  assert.ok(m, "fetchAllFilesAll not found");
+  assert.ok(!/return \{ pending: \[\], approved: \[\], rejected: \[\] \}/.test(m[0]),
+    "returning empty arrays would write an empty spreadsheet that looked successful");
+  assert.match(m[0], /throw err/, "the error reaches handleExport instead");
+});
+
+check("the hook carries no unused export helper", () => {
+  // fetchAllMatching had no caller; dead code that looks load-bearing is a
+  // maintenance trap, and the real export path is asserted above.
+  assert.ok(!hookCode.includes("fetchAllMatching"),
+    "fetchAllMatching is dead code — the page owns the export loops");
+});
+
+console.log("\nsorting is the server's, and the UI does not pretend otherwise");
+
+check("only createdAt is sortable — every other column is inert", () => {
+  // With manualSorting on, a sortable header the server ignores shows an arrow
+  // and reorders nothing. Each column block runs from its own declaration to
+  // the start of the next one, so a JSX cell of any length is covered.
+  const starts = [...tableCode.matchAll(/\n    \{\n      (?:accessorKey|id): "([A-Za-z]+)"/g)];
+  assert.ok(starts.length >= 8, `expected the full column set, found ${starts.length}`);
+
+  const blockFor = (name) => {
+    const i = starts.findIndex((s) => s[1] === name);
+    assert.notEqual(i, -1, `column ${name} not found`);
+    const from = starts[i].index;
+    const to = i + 1 < starts.length ? starts[i + 1].index : tableCode.length;
+    return tableCode.slice(from, to);
+  };
+
+  for (const col of ["formId", "applicantName", "dealerName", "branch", "district", "stage"]) {
+    assert.match(blockFor(col), /enableSorting: false/, `${col} must not look sortable`);
+  }
+  assert.ok(!/enableSorting: false/.test(blockFor("createdAt")),
+    "createdAt stays sortable — the server does support it");
+});
+
+check("the createdAt header is wired to the server's dir, not to TanStack state", () => {
+  assert.match(tableCode, /state: \{ rowSelection, sorting \}/, "sorting is controlled");
+  assert.match(tableCode, /onSortingChange: handleSortingChange/);
+  assert.match(tableCode, /files\.setDir\(/, "the header sets the server parameter");
+  assert.match(tableCode, /id: "createdAt", desc: files\.dir !== "asc"/,
+    "the arrow reflects the direction actually in force");
 });
 
 console.log("\nthe table no longer filters or pages in the browser");

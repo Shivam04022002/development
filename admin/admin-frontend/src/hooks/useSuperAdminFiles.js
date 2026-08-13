@@ -41,6 +41,13 @@ export default function useSuperAdminFiles(type = "pending") {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
+  // Sort direction on createdAt. The server sorts by createdAt and nothing
+  // else — it is the only field indexed for it — so this is a direction, not a
+  // column choice. It is kept out of `filterParams` because it does not change
+  // WHICH records match, only their order: a bulk action built from the filter
+  // must not be affected by it.
+  const [dir, setDir] = useState("desc");
+
   // `search` is what the box shows; `searchQuery` is what has been sent. The
   // split is what stops a request per keystroke.
   const [search, setSearch] = useState("");
@@ -80,7 +87,7 @@ export default function useSuperAdminFiles(type = "pending") {
   // Any change to what is being asked for puts the user back on page 1 —
   // otherwise a filter that yields two pages leaves them stranded on page 7
   // looking at an empty table.
-  useEffect(() => { setPage(1); }, [filterKey, type, pageSize]);
+  useEffect(() => { setPage(1); }, [filterKey, type, pageSize, dir]);
 
   const fetchPage = useCallback(async () => {
     const id = ++requestRef.current;
@@ -88,7 +95,7 @@ export default function useSuperAdminFiles(type = "pending") {
     setError("");
     try {
       const { data } = await API.get(`/superadmin/files/${type}`, {
-        params: { ...filterParams, page, limit: pageSize },
+        params: { ...filterParams, page, limit: pageSize, dir },
       });
       if (id !== requestRef.current) return;      // superseded
       setItems(Array.isArray(data?.items) ? data.items : []);
@@ -104,7 +111,7 @@ export default function useSuperAdminFiles(type = "pending") {
     }
     // filterParams is covered by filterKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, page, pageSize, filterKey]);
+  }, [type, page, pageSize, dir, filterKey]);
 
   useEffect(() => { fetchPage(); }, [fetchPage]);
 
@@ -135,31 +142,10 @@ export default function useSuperAdminFiles(type = "pending") {
     setFrom(""); setTo(""); setPage(1);
   }, []);
 
-  /**
-   * Every row matching the current filter, fetched a page at a time.
-   *
-   * Exports genuinely need the whole set, and this is the shape the codebase
-   * already uses for that (AdminAnalytics.fetchAll). The cap is a stop, not a
-   * silent truncation: the caller is told when it trips.
-   */
-  const fetchAllMatching = useCallback(async (maxPages = 100) => {
-    const rows = [];
-    let p = 1, totalPages = 1, truncated = false;
-    do {
-      const { data } = await API.get(`/superadmin/files/${type}`, {
-        params: { ...filterParams, page: p, limit: 100 },
-      });
-      (data?.items || []).forEach((r) => rows.push(r));
-      totalPages = Number(data?.pages) || 1;
-      p += 1;
-      if (p > maxPages && p <= totalPages) { truncated = true; break; }
-    } while (p <= totalPages);
-    return { rows, truncated };
-  }, [type, filterParams]);
-
   return {
     // query state
     page, setPage, pageSize, setPageSize,
+    dir, setDir,
     search, setSearch,
     branch, setBranch, district, setDistrict, stage, setStage,
     from, setFrom, to, setTo,
@@ -167,6 +153,6 @@ export default function useSuperAdminFiles(type = "pending") {
     // what the server said
     items, total, pages, loading, error, facets,
     // for bulk + export
-    filterParams, refresh: fetchPage, fetchAllMatching,
+    filterParams, refresh: fetchPage,
   };
 }
