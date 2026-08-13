@@ -285,7 +285,11 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
     // should do next.
     return {
       ok: false,
-      status: notRetryable ? "not_retryable" : "vendor_failed",
+      status: notRetryable
+        ? "not_retryable"
+        : result?.pending
+          ? "in_progress"
+          : "vendor_failed",
       subject: "coApplicant",
       subjectPan,
       reason,

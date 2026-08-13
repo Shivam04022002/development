@@ -466,6 +466,9 @@ export async function fetchCibilReport(applicant, config) {
           reason: vendorFailureReason(data, httpStatus, "CIBIL identity verification pending"),
           // doc §5.5: no charge applied and the same consumer may be retried.
           retryability: "retryable",
+          // Distinguishes Xaler "partial" / IV_IN_PROGRESS from
+          // transport exhaustion, which is also unavailable + retryable.
+          pending: true,
           raw: data,
           attempts,
           request: sanitizedRequest,

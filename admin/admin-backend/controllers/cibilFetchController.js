@@ -37,7 +37,7 @@ const STATUS_CODE = {
   vendor_failed: 502,
   // Same upstream-failure class as vendor_failed — the distinction is what the
   // operator should do next, carried in the body, not a new HTTP code.
-  not_retryable: 502,
+  not_retryable: 422,
 };
 
 /** POST /api/cibil/:applicationId/co-applicant/fetch — admin only. */
