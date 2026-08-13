@@ -21,9 +21,18 @@ export const API_ENVIRONMENTS = {
   local: 'http://192.168.29.103:5000',
 };
 
-// Backend used when EXPO_PUBLIC_API_BASE is not set. A plain `gradlew
-// assembleRelease` with no .env therefore builds against the V2 server.
-const DEFAULT_ENVIRONMENT = 'development';
+// Backend used when EXPO_PUBLIC_API_BASE is not set.
+//
+// This is production, so an unconfigured build targets the live backend rather
+// than the V2 development server. The failure it prevents is the dangerous
+// direction: a release APK built with a plain `gradlew assembleRelease` and no
+// .env used to point at V2, which would have had real dealers writing real
+// applications into the development database, silently and with no error.
+//
+// The cost is that a local build with no .env now reaches production, so set
+// EXPO_PUBLIC_API_BASE (or use the `development`/`preview` EAS profile, both of
+// which pin V2 explicitly) when building for development.
+const DEFAULT_ENVIRONMENT = 'production';
 
 const stripTrailingSlash = (value) => String(value || '').replace(/\/+$/, '');
 
