@@ -34,10 +34,19 @@ const STATUS_CODE = {
   consent_required: 403,
   not_found: 404,
   not_configured: 503,
+  // A genuine upstream fault: transport error, timeout, 5xx or 429. The gateway
+  // really did fail, so 502 is accurate.
   vendor_failed: 502,
-  // Same upstream-failure class as vendor_failed — the distinction is what the
-  // operator should do next, carried in the body, not a new HTTP code.
-  not_retryable: 502,
+  // NOT an upstream fault. The bureau was reached, understood the request and
+  // answered it — the answer was simply "no matching credit file" (or a refusal
+  // to return a mismatched consumer's report). Reporting that as 502 claimed the
+  // gateway had failed when nothing had, which sent an operator hunting for a
+  // production outage that did not exist, and would let any proxy or client
+  // treat a settled, billable outcome as a transient error worth repeating.
+  // 422 says what is true: the request was well formed, and could not be
+  // fulfilled. The body still carries `status: "not_retryable"`, which is what
+  // the UI actually reads.
+  not_retryable: 422,
 };
 
 /** POST /api/cibil/:applicationId/co-applicant/fetch — admin only. */
@@ -64,6 +73,16 @@ export const fetchCoApplicantCibilReport = async (req, res) => {
       // can tell a temporary fault from one that will fail identically again.
       retryability: outcome.retryability,
       retryable: outcome.retryable,
+      // Present only when the bureau answered "partial": it is still waiting
+      // for the customer's authentication answer. Carries the web-token URL
+      // that collects it and the report URLs that serve the report once it is
+      // given — the one thing an operator can act on, and previously discarded
+      // with the rest of the failure body. `undefined` on every other outcome,
+      // so it is simply absent from the JSON and nothing else changes shape.
+      //
+      // This is normalised, http(s)-only data derived from the response — not
+      // the raw payload and not the request, both of which stay internal.
+      pendingAuthentication: outcome.pendingAuthentication,
       message: outcome.message || outcome.reason,
     });
   } catch (err) {

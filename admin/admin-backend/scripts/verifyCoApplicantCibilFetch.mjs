@@ -34,7 +34,10 @@ import {
   consentStatus,
   STALE_RESERVATION_MS,
 } from "../services/coApplicantCibilService.js";
-import { classifyRetryability } from "../services/xalerCibilService.js";
+import {
+  classifyRetryability,
+  extractPendingAuthentication,
+} from "../services/xalerCibilService.js";
 
 let passed = 0;
 const acheck = async (name, fn) => {
@@ -340,6 +343,229 @@ await acheck("retryable vendor failure keeps status vendor_failed", async () => 
   assert.equal(reports.rows.length, 0, "reservation released");
 });
 
+/* ── Regression: a "partial" flow is not a gateway failure ────────────────
+ * Xaler answers HTTP 200 / status "partial" (IV_IN_PROGRESS) when identity
+ * verification has not finished. No charge is applied and the same consumer may
+ * be retried, but every non-not_retryable failure was collapsed into
+ * vendor_failed, so this surfaced as 502 — the same misleading "gateway is
+ * down" signal the no-hit fix above removed.
+ *
+ * The discriminator matters. The client's transport-exhaustion return sets
+ * `unavailable` AND `retryability: "retryable"` too, so branching on either of
+ * those alone would turn every genuine timeout into a 409. Only `pending`
+ * separates them, which is why the two checks below are a pair: the second is
+ * what fails if the condition is ever widened back to `unavailable`. */
+
+/**
+ * The production body for FORM-664454 (2026-08-13), minus identity: HTTP 200,
+ * status "partial", the bureau still waiting for the customer's authentication
+ * answer. It carries both the namespaced and the short spellings of every URL,
+ * which is why the extractor reads both.
+ *
+ * `pendingAuth` is DERIVED by the real extractor rather than hand-written, for
+ * the same reason `retryability` above is derived by the real classifier: a
+ * hand-written fixture can agree with a test while disagreeing with the client.
+ */
+const PARTIAL_BODY = {
+  status: "partial",
+  message:
+    "The bureau is still waiting for the customer's authentication answer, so the credit " +
+    "report cannot be pulled yet. This happens when the OTP question was never answered, " +
+    "or the answer was never submitted back to the bureau.",
+  pending_authentication: true,
+  transunion_webtoken_url: "https://webtoken.transunion.example/session/abc123",
+  transunion_json_report_url: "https://api.xaler.example/reports/abc123.json",
+  xaler_generated_pdf_report_url: "https://api.xaler.example/reports/abc123.pdf",
+  web_token_url: "https://webtoken.transunion.example/session/abc123",
+  report_url: "https://api.xaler.example/reports/abc123.json",
+  pdf_report_url: "https://api.xaler.example/reports/abc123.pdf",
+  client_key: "tu_1755000000000_aabbccddeeff",
+  retryable: true,
+};
+
+const PARTIAL = {
+  ok: false,
+  unavailable: true,
+  pending: true,
+  reason: "CIBIL identity verification pending",
+  retryability: "retryable",
+  raw: PARTIAL_BODY,
+  pendingAuth: extractPendingAuthentication(PARTIAL_BODY),
+};
+
+await acheck("a partial / IV_IN_PROGRESS flow → in_progress, not vendor_failed", async () => {
+  const reports = fakeReports();
+  const t = baseDeps({ reports, vendor: { calls: [], fn: async () => PARTIAL } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "in_progress", "pending verification is not a gateway fault");
+  assert.equal(out.retryability, "retryable");
+  assert.equal(out.retryable, true, "the same consumer may be retried later");
+  assert.equal(reports.rows.length, 0, "reservation released — subject never stuck");
+});
+
+await acheck("a transport exhaustion is unavailable but NOT pending → stays vendor_failed", async () => {
+  const t = baseDeps({
+    vendor: { calls: [], fn: async () => ({ ok: false, unavailable: true, reason: "Waiting for CIBIL Response", retryability: "retryable" }) },
+  });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "vendor_failed", "the gateway really did fail — 502 is accurate");
+});
+
+await acheck("the client marks its partial branch pending, so the two files cannot drift", async () => {
+  const src = await readFile(new URL("../services/xalerCibilService.js", import.meta.url), "utf8");
+  const branch = src.slice(src.indexOf('flowStatus === "partial"'));
+  const body = branch.slice(0, branch.indexOf("}"));
+  assert.ok(/pending:\s*true/.test(body), "the partial return must set pending:true");
+  assert.ok(!/pending:\s*true/.test(src.slice(src.lastIndexOf("classifyRetryability({ transport: true })"))),
+    "the transport-exhaustion return must NOT be marked pending");
+});
+
+/* ── Regression: a pending flow must not throw away what the vendor sent ───
+ * FORM-664454, production: HTTP 200 / "partial", with the web-token URL the
+ * customer has to complete — and ZERO rows in `cibilreports` for the
+ * co-applicant. The status was already correct (in_progress / 409); the branch
+ * returned before anything was persisted, so the only route to finishing the
+ * pull was parsed and then dropped.
+ *
+ * The reservation is still released. Storing the body in the reserved row would
+ * make isCompletedReport() true — every later attempt would answer
+ * `already_exists`, permanently, because nothing would ever complete it. The
+ * checks below pin both halves: the payload survives, and the subject stays
+ * fetchable. */
+
+await acheck("the counterfactual: a partial body in the reserved row reads as a COMPLETED report", () => {
+  // This is the whole reason the row is released rather than completed. Every
+  // field the success path writes flips isCompletedReport(), and the schema has
+  // no field that says "incomplete" — so a pending row would answer
+  // `already_exists` on every later attempt, permanently, because nothing would
+  // ever complete it. That is strictly worse than the bug being fixed: it would
+  // turn a retryable pending state into a subject that can never be fetched.
+  assert.equal(isCompletedReport({ rawResponse: PARTIAL_BODY }), true, "rawResponse alone is enough");
+  assert.equal(isCompletedReport({ rawRequest: { pan_id: PAN_COAPP } }), true, "so is rawRequest");
+  assert.equal(isCompletedReport({ rawResponsePath: "applications/FORM-1/cibil/x.json" }), true);
+  assert.equal(isCompletedReport({ requestId: PARTIAL_BODY.client_key }), true);
+  // The one payload field it ignores cannot carry a response body.
+  assert.equal(isCompletedReport({ reportUrl: PARTIAL_BODY.report_url }), false,
+    "reportUrl is not a completion marker — and not somewhere a body can live");
+});
+
+await acheck("a pending flow returns the bureau's authentication details", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => PARTIAL } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  const p = out.pendingAuthentication;
+  assert.ok(p, "the authentication block must reach the caller");
+  assert.equal(p.pendingAuthentication, true);
+  assert.equal(p.webTokenUrl, "https://webtoken.transunion.example/session/abc123",
+    "the URL that collects the customer's answer");
+  assert.equal(p.jsonReportUrl, "https://api.xaler.example/reports/abc123.json");
+  assert.equal(p.pdfReportUrl, "https://api.xaler.example/reports/abc123.pdf");
+  assert.equal(p.requestId, "tu_1755000000000_aabbccddeeff", "the flow can be named later");
+  assert.equal(p.vendorRetryableFlag, true, "recorded, not obeyed");
+});
+
+await acheck("the complete partial body is written to the existing file store", async () => {
+  const saved = [];
+  const t = baseDeps({ vendor: { calls: [], fn: async () => PARTIAL } });
+  t.deps.saveRawFile = async (formId, parts, data) => {
+    saved.push({ formId, parts, data });
+    return ["applications", formId, ...parts].join("/");
+  };
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(saved.length, 1, "exactly one write");
+  assert.equal(saved[0].formId, "FORM-1");
+  assert.deepEqual(saved[0].parts, ["cibil", `pending-response-${PAN_COAPP}.json`]);
+  assert.notEqual(saved[0].parts[1], `raw-response-${PAN_COAPP}.json`,
+    "must never overwrite or impersonate a completed report");
+  assert.deepEqual(JSON.parse(saved[0].data), PARTIAL_BODY, "verbatim — nothing lost");
+  assert.equal(out.pendingResponsePath, `applications/FORM-1/cibil/pending-response-${PAN_COAPP}.json`);
+});
+
+await acheck("a file-store failure degrades to the response only, never to a throw", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => PARTIAL } });
+  t.deps.saveRawFile = async () => { throw new Error("EACCES"); };
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "in_progress");
+  assert.equal(out.pendingResponsePath, "", "no path is claimed when the write failed");
+  assert.ok(out.pendingAuthentication, "the details still reach the caller");
+});
+
+await acheck("a pending flow creates NO report row, so the subject stays fetchable", async () => {
+  const app = fakeApp();
+  const reports = fakeReports();
+  let call = 0;
+  const vendor = { calls: [], fn: async () => { vendor.calls.push(1); call += 1; return call === 1 ? PARTIAL : { ok: true, extracted: { score: 700, requestId: "tu_after_auth" }, raw: {}, request: {} }; } };
+  const first = await fetchCoApplicantCibil(APP_ID, baseDeps({ app, reports, vendor }).deps);
+  assert.equal(first.status, "in_progress");
+  assert.equal(reports.rows.length, 0,
+    "a pending body in the reserved row would read as a completed report and block the retry");
+  const second = await fetchCoApplicantCibil(APP_ID, baseDeps({ app, reports, vendor }).deps);
+  assert.equal(second.ok, true, "the retry the vendor invited must actually be possible");
+  assert.equal(second.status, "fetched");
+  assert.equal(vendor.calls.length, 2);
+});
+
+await acheck("a pending flow writes no score and no summary anywhere", async () => {
+  const t = baseDeps({ vendor: { calls: [], fn: async () => PARTIAL } });
+  const cibilBefore = JSON.stringify(t.app.doc.cibil);
+  const subjectsBefore = JSON.stringify(t.app.doc.cibilSubjects);
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.ok, false, "pending is not a fetched report");
+  assert.equal(out.score, undefined, "no score is implied");
+  assert.equal(JSON.stringify(t.app.doc.cibil), cibilBefore, "Application.cibil is the applicant's");
+  assert.equal(JSON.stringify(t.app.doc.cibilSubjects), subjectsBefore, "no co-applicant summary");
+  assert.equal(t.app.writes.length, 0, "no write to the application at all");
+  assert.ok(t.hist.includes("CO_APPLICANT_CIBIL_FETCH_FAILED"));
+  assert.ok(!t.hist.includes("CO_APPLICANT_CIBIL_FETCHED"), "never logged as fetched");
+});
+
+await acheck("only a pending flow carries the block — no other failure gains it", async () => {
+  const others = [
+    ["transport exhaustion", { ok: false, unavailable: true, reason: "Waiting for CIBIL Response", retryability: "retryable" }],
+    ["generic retryable", { ok: false, reason: "boom", retryability: "retryable" }],
+    ["no credit record", NO_RECORD],
+  ];
+  for (const [name, res] of others) {
+    const saved = [];
+    const t = baseDeps({ vendor: { calls: [], fn: async () => res } });
+    t.deps.saveRawFile = async (...a) => { saved.push(a); return "x"; };
+    const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+    assert.equal(out.pendingAuthentication, undefined, `${name} must not report pending authentication`);
+    assert.equal(out.pendingResponsePath, undefined, `${name} must not claim a stored body`);
+    assert.equal(saved.length, 0, `${name} must not write a pending file`);
+  }
+});
+
+/* Xaler's own PCC-conflict refusal: the bureau was reached and declined, with
+ * `retryable: false`. It must stay deterministic — not become "pending" because
+ * it is also a non-success flow. */
+const PCC_PAYLOAD = {
+  status: "error",
+  error_code: "BUREAU_PCC_CONFLICT",
+  message: "The bureau returned a PCC for a different consumer, so no report can be released.",
+  bureau_returned_pcc: true,
+  retryable: false,
+};
+const PCC_CONFLICT = {
+  ok: false,
+  invalid: true,
+  reason: PCC_PAYLOAD.message,
+  // Derived, like NO_RECORD above: an `error` flow arrives HTTP 200, so it is
+  // the vendor's own boolean that settles this one.
+  retryability: classifyRetryability({ data: PCC_PAYLOAD, httpStatus: 200 }),
+  raw: PCC_PAYLOAD,
+};
+
+await acheck("BUREAU_PCC_CONFLICT → not_retryable, reservation released, no pending block", async () => {
+  assert.equal(PCC_CONFLICT.retryability, "not_retryable", "the vendor said so explicitly");
+  const reports = fakeReports();
+  const t = baseDeps({ reports, vendor: { calls: [], fn: async () => PCC_CONFLICT } });
+  const out = await fetchCoApplicantCibil(APP_ID, t.deps);
+  assert.equal(out.status, "not_retryable");
+  assert.equal(out.retryable, false);
+  assert.equal(out.pendingAuthentication, undefined);
+  assert.equal(reports.rows.length, 0, "subject never stuck");
+});
+
 await acheck("unknown retryability is neither promised nor denied", async () => {
   const t = baseDeps({ vendor: { calls: [], fn: async () => ({ ok: false, reason: "odd", retryability: "unknown" }) } });
   const out = await fetchCoApplicantCibil(APP_ID, t.deps);
@@ -602,6 +828,65 @@ await acheck("consent status reports the absence of a field rather than assuming
   const c = consentStatus();
   assert.equal(c.known, false);
   assert.match(c.reason, /no co-applicant CIBIL consent field/);
+});
+
+/* ── Regression: outcome → HTTP status ────────────────────────────────────
+ * A bureau no-hit was mapped to 502. Nothing had failed at the gateway: the
+ * vendor was reached and answered. Operators saw "502 Bad Gateway" in DevTools
+ * and went looking for a production outage that did not exist.
+ *
+ * Read from the source so the map cannot drift away from these expectations
+ * without a test failing. */
+console.log("\nHTTP status mapping (co-applicant fetch)");
+
+const controllerSrc = await readFile(
+  new URL("../controllers/cibilFetchController.js", import.meta.url), "utf8");
+const mappedCode = (status) => {
+  const m = controllerSrc.match(new RegExp(`^\\s*${status}:\\s*(\\d{3})\\s*,`, "m"));
+  return m ? Number(m[1]) : null;
+};
+
+await acheck("a bureau no-hit is NOT reported as a gateway failure", () => {
+  const code = mappedCode("not_retryable");
+  assert.notEqual(code, 502, "502 claims the upstream failed; the bureau answered normally");
+  assert.equal(code, 422, "well-formed request, could not be fulfilled");
+});
+
+await acheck("a genuine upstream fault is still 502", () => {
+  // Transport error, timeout, 5xx or 429 — the gateway really did fail.
+  assert.equal(mappedCode("vendor_failed"), 502);
+});
+
+await acheck("success and the remaining outcomes keep their codes", () => {
+  assert.equal(mappedCode("fetched"), 200);
+  assert.equal(mappedCode("already_exists"), 200);
+  assert.equal(mappedCode("in_progress"), 409);
+  assert.equal(mappedCode("missing_identity"), 400);
+  assert.equal(mappedCode("no_co_applicant"), 400);
+  assert.equal(mappedCode("consent_required"), 403);
+  assert.equal(mappedCode("not_found"), 404);
+  assert.equal(mappedCode("not_configured"), 503);
+});
+
+await acheck("the body still carries the status the UI matches on", () => {
+  // The frontend maps by `status`, not by HTTP code — which is why the code
+  // could be corrected without touching the message the operator sees.
+  assert.match(controllerSrc, /status:\s*outcome\.status/);
+});
+
+await acheck("a pending bureau authentication is still 409, not 502 or 422", () => {
+  // It shares `in_progress` with a reservation already in flight: both mean
+  // "come back to this", and neither is a fault.
+  assert.equal(mappedCode("in_progress"), 409);
+});
+
+await acheck("the authentication details are echoed, the internal path is not", () => {
+  assert.match(controllerSrc, /pendingAuthentication:\s*outcome\.pendingAuthentication/,
+    "the frontend can only act on what the response carries");
+  assert.ok(!/pendingResponsePath/.test(controllerSrc),
+    "the uploads path is internal, like rawResponsePath");
+  assert.ok(!/outcome\.(raw|request)\b/.test(controllerSrc),
+    "the raw vendor payload and request must never be echoed");
 });
 
 console.log(

@@ -102,7 +102,13 @@ const defaultFindApplication = async (applicationId) => {
  *   { ok:true,  status:"fetched",        subject:"coApplicant", subjectPan, score }
  *   { ok:false, status:"already_exists" | "in_progress" | "missing_identity" |
  *                      "no_co_applicant" | "not_found" | "not_configured" |
- *                      "consent_required" | "vendor_failed", ... }
+ *                      "consent_required" | "vendor_failed" |
+ *                      "not_retryable", ... }
+ *
+ * A vendor "partial" flow (identity verification still running) is reported as
+ * `in_progress` and additionally carries `pendingAuthentication` — the
+ * web-token / report URLs the bureau is waiting on — and
+ * `pendingResponsePath`, where the complete body was written.
  */
 export async function fetchCoApplicantCibil(applicationId, deps = {}) {
   const {
@@ -277,20 +283,90 @@ export async function fetchCoApplicantCibil(applicationId, deps = {}) {
     );
     logEvent("coapplicant_cibil_response", {
       applicationId: String(app._id), formId: app.formId, subject: "coApplicant",
-      ok: false, retryability, reason,
+      ok: false, retryability, reason, pending: Boolean(result?.pending),
     });
+
+    // ── Pending authentication: preserve what the vendor DID return ─────────
+    //
+    // A "partial" flow is the one failure kind that carries something the
+    // operator can act on — the bureau is waiting for the customer's
+    // authentication answer, and the response names the web-token URL that
+    // collects it plus the report URLs that will serve the report afterwards.
+    // Every other branch above discards the body, which was correct while a
+    // failure body held nothing but an explanation; here it loses the only
+    // route to finishing the pull. FORM-664454 is that case in production: a
+    // valid HTTP 200 / "partial" response, and zero rows in `cibilreports`.
+    //
+    // It is deliberately NOT written into the reserved CibilReport row. Any of
+    // rawRequest / rawResponse / rawResponsePath / requestId makes
+    // isCompletedReport() true, so a pending row would answer every later
+    // attempt with `already_exists` — permanently, since nothing would ever
+    // complete it. That trades a lost payload for a subject that can never be
+    // fetched again, and the schema has no field to mark a row as incomplete.
+    // The reservation is therefore still released, exactly as before.
+    //
+    // Instead the raw body goes to the SAME application file store the success
+    // path already writes to, under its own name so it can never be mistaken
+    // for a stored report (nothing reads it as one — loadRawResponse only ever
+    // resolves a path recorded on a CibilReport row), and the actionable fields
+    // are returned to the caller. Nothing else about this branch changes.
+    let pendingAuthentication;
+    let pendingResponsePath = "";
+    if (result?.pending) {
+      pendingAuthentication = result.pendingAuth || null;
+      if (result.raw !== undefined && result.raw !== null && app.formId) {
+        try {
+          pendingResponsePath = await saveRawFile(
+            app.formId,
+            ["cibil", `pending-response-${subjectPan}.json`],
+            JSON.stringify(result.raw, null, 2)
+          );
+        } catch (e) {
+          logError("coapplicant_cibil_pending_write_failed", {
+            applicationId: String(app._id), error: e?.message,
+          });
+        }
+      }
+      logEvent("coapplicant_cibil_pending", {
+        applicationId: String(app._id),
+        formId: app.formId,
+        subject: "coApplicant",
+        // Presence only — a web-token URL is a bearer credential for the
+        // customer's authentication session and is never logged.
+        pendingAuthentication: pendingAuthentication?.pendingAuthentication ?? null,
+        hasWebTokenUrl: Boolean(pendingAuthentication?.webTokenUrl),
+        hasReportUrl: Boolean(pendingAuthentication?.jsonReportUrl || pendingAuthentication?.pdfReportUrl),
+        rawResponsePath: pendingResponsePath || null,
+      });
+    }
 
     // Explicitly NOT a low score and NOT a rejection — the application is
     // untouched either way. Only the status distinguishes what the operator
     // should do next.
+    // A "partial" flow is not a gateway fault: the bureau answered, and only
+    // identity verification is still running, so the same consumer can be
+    // retried later. Reporting that as vendor_failed sent 502 for a request
+    // nothing had actually failed. `pending` is the vendor client's own marker
+    // for that case — deliberately narrower than `unavailable`, which a plain
+    // transport exhaustion also sets, and which must stay a 502.
     return {
       ok: false,
-      status: notRetryable ? "not_retryable" : "vendor_failed",
+      status: notRetryable
+        ? "not_retryable"
+        : result?.pending
+          ? "in_progress"
+          : "vendor_failed",
       subject: "coApplicant",
       subjectPan,
       reason,
       retryability,
       retryable: retryability === "retryable",
+      // Present ONLY for a pending flow, so a caller can tell a bureau still
+      // awaiting the customer's answer from a reservation already in flight —
+      // both of which are reported as `in_progress`.
+      ...(result?.pending
+        ? { pendingAuthentication, pendingResponsePath }
+        : {}),
     };
   }
 

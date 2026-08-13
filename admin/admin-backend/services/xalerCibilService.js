@@ -286,6 +286,128 @@ export const sanitizeVendorText = (text) =>
     .slice(0, 300);
 
 /**
+ * The vendor's diagnostic block, sanitised for logging.
+ *
+ * Why this exists: on ANY failure the caller releases its reservation, which
+ * deletes the only row that would have held the response — so `identity_sent`,
+ * `diagnosis`, `what_to_do_next`, `match_strength` and `warnings` were being
+ * discarded entirely. Those are precisely the fields that separate "the bureau
+ * has no file for this person" from "we sent a malformed request", and without
+ * them that question can only be answered by reconstructing the payload by hand.
+ *
+ * Logged, not stored: keeping the row would make a failed attempt look like a
+ * completed report to isCompletedReport(), which would then block the subject
+ * from ever being fetched again. The reservation lifecycle is left exactly as it
+ * is, and no schema changes.
+ *
+ * `identity_sent` echoes the identity we transmitted, so it is reduced to field
+ * NAMES and whether each was non-empty. No value from it is ever logged.
+ */
+export function vendorDiagnostics(data) {
+  if (!data || typeof data !== "object") return null;
+
+  const identity = data.identity_sent;
+  const identitySent =
+    identity && typeof identity === "object"
+      ? Object.keys(identity).map(
+          (k) => `${k}=${identity[k] === null || identity[k] === undefined || identity[k] === "" ? "empty" : "present"}`
+        )
+      : null;
+
+  const strength = data.match_strength;
+  const matchStrength =
+    strength && typeof strength === "object"
+      ? {
+          score: strength.score ?? null,
+          level: strength.level ?? null,
+          // Descriptions of WHICH identifiers were supplied, never their values.
+          present: Array.isArray(strength.present) ? strength.present : [],
+          missing: Array.isArray(strength.missing) ? strength.missing : [],
+        }
+      : null;
+
+  const warnings = Array.isArray(data.warnings)
+    ? data.warnings.map((w) => sanitizeVendorText(typeof w === "string" ? w : JSON.stringify(w)))
+    : [];
+
+  return {
+    errorCode: data.error_code ?? null,
+    diagnosis: data.diagnosis ? sanitizeVendorText(JSON.stringify(data.diagnosis)) : null,
+    whatToDoNext: data.what_to_do_next ? sanitizeVendorText(String(data.what_to_do_next)) : null,
+    identitySent,
+    matchStrength,
+    warnings,
+    fallbackUsed: data.fallback_used ?? null,
+    bureauReturnedPcc: data.bureau_returned_pcc ?? null,
+    vendorRetryableFlag: typeof data.retryable === "boolean" ? data.retryable : null,
+  };
+}
+
+/**
+ * A vendor-supplied link we are willing to hand on to a caller.
+ *
+ * Only absolute http(s) is accepted: these values are echoed to the admin UI,
+ * which renders them, so a `javascript:` or `data:` URL arriving in a vendor
+ * payload must never reach a link. Length is capped for the same reason the
+ * text sanitiser truncates — an unbounded vendor string is not stored or
+ * forwarded verbatim.
+ */
+const MAX_VENDOR_URL_LEN = 2048;
+const asVendorUrl = (value) => {
+  const v = typeof value === "string" ? value.trim() : "";
+  return /^https?:\/\//i.test(v) && v.length <= MAX_VENDOR_URL_LEN ? v : "";
+};
+
+/**
+ * The authentication artefacts that come back with a "partial" flow (doc §5.5).
+ *
+ * Why this exists: when the bureau is still waiting for the customer's
+ * authentication answer, the response is HTTP 200 / status "partial" and
+ * carries `pending_authentication` plus the web-token URL the customer has to
+ * complete, and the report URLs that will serve the report once they do. That
+ * is the ONLY actionable content of a pending response, and the caller releases
+ * its reservation on every failure — deleting the row that would otherwise have
+ * held it — so without this it was parsed, logged as a byte count, and dropped.
+ *
+ * Both the vendor's namespaced keys and the short aliases are read, in the
+ * order the production payload lists them, so neither spelling is lost.
+ *
+ * `extracted` is the result extractReport() has ALREADY produced for this same
+ * body — the partial branch computes it a few lines before calling this — so
+ * the two fields that function already resolves (client_key → requestId,
+ * report_url → reportUrl) are reused rather than resolved a second time under a
+ * different key list, which is exactly how two extractors drift apart. Only the
+ * keys nothing else looks for are read here. A standalone caller may omit it
+ * and gets the same values.
+ *
+ * Returns null for a non-object body. Never throws.
+ */
+export function extractPendingAuthentication(data, extracted) {
+  if (!data || typeof data !== "object") return null;
+
+  const ex = extracted || extractReport(data).extracted;
+  const flag = getDeep(data, "pending_authentication");
+
+  return {
+    // Tri-state on purpose: `null` means the vendor said nothing, which is not
+    // the same claim as "authentication is not pending".
+    pendingAuthentication:
+      typeof flag === "boolean" ? flag : flag === undefined || flag === null ? null : true,
+    // Genuinely new: no other flow returns a web token, so nothing in
+    // extractReport() looks for one.
+    webTokenUrl: asVendorUrl(pick(data, ["transunion_webtoken_url", "web_token_url", "webTokenUrl"])),
+    // The vendor-namespaced spelling first, then whatever the shared extractor
+    // already resolved from `report_url`.
+    jsonReportUrl: asVendorUrl(pick(data, ["transunion_json_report_url"]) ?? ex.reportUrl),
+    pdfReportUrl: asVendorUrl(pick(data, ["xaler_generated_pdf_report_url", "pdf_report_url"])),
+    // The same flow identifier the success path stores as CibilReport.requestId.
+    requestId: String(ex.requestId || ""),
+    // Recorded, not obeyed — classifyRetryability remains the authority.
+    vendorRetryableFlag: typeof data.retryable === "boolean" ? data.retryable : null,
+  };
+}
+
+/**
  * The most useful sanitised explanation the vendor gave, in preference order:
  * the structured `error`, then `message`, then a generic HTTP fallback.
  */
@@ -356,8 +478,16 @@ async function parseBody(res) {
  * Single call to the Unified endpoint (doc §5.1). Returns one of:
  *   { ok:true,  extracted, raw, attempts }                  — score obtained
  *   { ok:false, unavailable:true, reason, attempts, error } — unreachable / timeout /
- *                                                            5xx (doc §4.3), or a
- *                                                            "partial" flow (doc §5.5)
+ *                                                            5xx (doc §4.3)
+ *   { ok:false, unavailable:true, pending:true, pendingAuth, reason, raw }
+ *                                                          — a "partial" flow
+ *                                                            (doc §5.5): the vendor
+ *                                                            answered, identity
+ *                                                            verification is still
+ *                                                            running. `pendingAuth`
+ *                                                            carries the web-token /
+ *                                                            report URLs the customer
+ *                                                            must complete.
  *   { ok:false, invalid:true,    reason, raw,  attempts }   — HTTP 400 validation
  *                                                            error (doc §4.1), a
  *                                                            "error" flow, or no
@@ -419,6 +549,9 @@ export async function fetchCibilReport(applicant, config) {
           topLevelKeys: data && typeof data === "object" ? Object.keys(data) : [],
           status: typeof data?.status === "string" ? data.status : null,
           message: typeof data?.message === "string" ? data.message.slice(0, 200) : null,
+          // Preserved here because a failure deletes the row that would
+          // otherwise have held them. See vendorDiagnostics().
+          diagnostics: vendorDiagnostics(data),
         });
       } catch (logErr) {
         logWarn("cibil_response_body_unloggable", { error: logErr?.message });
@@ -463,7 +596,21 @@ export async function fetchCibilReport(applicant, config) {
         return {
           ok: false,
           unavailable: true,
+          // The transport-exhaustion return at the end of this function is also
+          // `unavailable` + `retryable`, so those two fields alone cannot tell
+          // the two apart — and they mean opposite things to an operator. There
+          // the gateway genuinely failed; here the vendor answered normally and
+          // only the identity check is still running. This flag is that
+          // distinction, so a caller can report a pending verification instead
+          // of an upstream fault.
+          pending: true,
           reason: vendorFailureReason(data, httpStatus, "CIBIL identity verification pending"),
+          // The authentication artefacts, normalised. `raw` still holds the
+          // complete body; this is the subset a caller can act on without
+          // parsing the vendor payload itself. `extracted` — already computed
+          // above for this body, and discarded by every non-success branch — is
+          // handed over so requestId and reportUrl are not resolved twice.
+          pendingAuth: extractPendingAuthentication(data, extracted),
           // doc §5.5: no charge applied and the same consumer may be retried.
           retryability: "retryable",
           raw: data,
