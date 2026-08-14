@@ -11,7 +11,10 @@ import {
   viewCibilPdf,
   downloadCibilPdf,
 } from "../controllers/cibilReportController.js";
-import { fetchCoApplicantCibilReport } from "../controllers/cibilFetchController.js";
+import {
+  fetchCoApplicantCibilReport,
+  fetchApplicantCibilReport,
+} from "../controllers/cibilFetchController.js";
 
 const router = express.Router();
 
@@ -42,6 +45,15 @@ router.post(
   protect,
   requireSuperAdmin,
   fetchCoApplicantCibilReport
+);
+
+// The applicant's equivalent. Same guard for the same two reasons: it spends
+// money against the same credentials, and `protect` alone is fail-open.
+router.post(
+  "/:applicationId/applicant/fetch",
+  protect,
+  requireSuperAdmin,
+  fetchApplicantCibilReport
 );
 
 export default router;

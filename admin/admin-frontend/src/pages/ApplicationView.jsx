@@ -68,6 +68,18 @@ export default function ApplicationView() {
   // the request is billable and must not be issued twice by a double-click.
   const [showCoFetchConfirm, setShowCoFetchConfirm] = useState(false);
   const [coFetchBusy, setCoFetchBusy] = useState(false);
+  // Applicant CIBIL fetch: same billable action as the co-applicant's, so it
+  // gets the same confirmation gate and single-flight guard.
+  const [showAppFetchConfirm, setShowAppFetchConfirm] = useState(false);
+  const [appFetchBusy, setAppFetchBusy] = useState(false);
+
+  // ── Applicant / Co-Applicant inline edit ────────────────────────────────
+  // One party is editable at a time: `editParty` names it, `editForm` holds the
+  // draft. The draft is a copy, so Cancel is simply discarding it — the saved
+  // record is never mutated until the PATCH succeeds.
+  const [editParty, setEditParty] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
 
   /**
    * Return the admin to the Pending list they came from.
@@ -169,6 +181,114 @@ export default function ApplicationView() {
                `${app.formId || app._id}-CIBIL-Report.pdf`);
     } catch (err) { cibilError(err); }
     finally { setCibilBusy(""); }
+  };
+
+  /**
+   * Open the editor for one party, pre-filled from the SAVED record.
+   *
+   * `name` is split into its parts only when the record has none of its own,
+   * so a legacy record (single `name`) becomes editable without losing what it
+   * had, and a modern record keeps the parts it already stores.
+   */
+  const startEdit = (role, data) => {
+    const d = data || {};
+    const parts = String(d.name || "").trim().split(/\s+/).filter(Boolean);
+    setEditForm({
+      firstName: d.firstName || parts[0] || "",
+      surname: d.surname || (parts.length > 1 ? parts.slice(1).join(" ") : ""),
+      mobileNumber: d.mobileNumber || d.mobile || "",
+      email: d.email || "",
+      gender: d.gender || "",
+      fatherName: d.fatherName || "",
+      dateOfBirth: toDateInput(d.dateOfBirth),
+      aadharNo: d.aadharNo || "",
+      panNo: d.panNo || "",
+      address: d.address || "",
+      pincode: d.pincode || "",
+      policeStation: d.policeStation || "",
+      postOffice: d.postOffice || "",
+      relation: d.relation || "",
+      documentType: d.documentType || "",
+    });
+    setEditParty(role);
+  };
+
+  /** Cancel discards the draft outright; nothing was written. */
+  const cancelEdit = () => {
+    setEditParty(null);
+    setEditForm({});
+  };
+
+  const onEditField = (key, value) => setEditForm((f) => ({ ...f, [key]: value }));
+
+  /**
+   * Persist through the existing application API. Only the party's detail
+   * fields are sent — the endpoint's whitelist is the real guard, this is just
+   * the matching client half.
+   *
+   * Surname is deliberately NOT validated here: first name is the only required
+   * part, matching the dealer app and the backend.
+   */
+  const saveParty = async () => {
+    if (!app?._id || !editParty || editSaving) return;
+    if (!String(editForm.firstName || "").trim()) {
+      setToast({ type: "error", msg: "First name is required. Surname is optional." });
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const { data } = await api.patch(
+        `/applications/${app._id}/party/${editParty}`,
+        editForm
+      );
+      setToast({ type: "success", msg: data?.message || "Details updated." });
+      setEditParty(null);
+      setEditForm({});
+      await refreshApplication();
+    } catch (err) {
+      setToast({
+        type: "error",
+        msg:
+          err?.response?.data?.message ||
+          err?.message ||
+          "Could not save the details.",
+      });
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ── Applicant CIBIL fetch ────────────────────────────────────────────────
+  // Uses the applicant endpoint, which runs the SAME service the automatic
+  // fetch at application creation runs. A "partial" flow comes back as
+  // `in_progress` and is shown as pending verification, not as a failure.
+  const handleApplicantFetch = async () => {
+    if (appFetchBusy) return;
+    setShowAppFetchConfirm(false);
+    setAppFetchBusy(true);
+    try {
+      const { data } = await api.post(`/cibil/${app._id}/applicant/fetch`);
+      const outcome = fetchOutcome(data);
+      // The server's message is preferred over FETCH_MESSAGES here: that map is
+      // worded for the co-applicant ("Co-Applicant CIBIL fetch is already in
+      // progress"), which would name the wrong person on this button. The map
+      // is still consulted for `ok`, which is party-agnostic.
+      setToast({
+        type: data?.success || outcome?.ok ? "success" : "error",
+        msg: data?.message || outcome?.message || "Applicant CIBIL request completed.",
+      });
+      await refreshApplication();
+    } catch (err) {
+      setToast({
+        type: "error",
+        msg:
+          err?.response?.data?.message ||
+          err?.message ||
+          "Applicant CIBIL request failed.",
+      });
+    } finally {
+      setAppFetchBusy(false);
+    }
   };
 
   // ── Co-applicant CIBIL fetch — the one billable action in this page ──────
@@ -489,6 +609,11 @@ export default function ApplicationView() {
    */
   const applicantCibil = subjectSummary(app, app?.applicant, true);
   const coApplicantCibil = subjectSummary(app, app?.coApplicant, false);
+  // Same emptiness rule the backend uses: an object with no keys is no party.
+  const hasCoApplicant =
+    app?.coApplicant &&
+    typeof app.coApplicant === "object" &&
+    Object.keys(app.coApplicant).length > 0;
 
   // Whether the co-applicant's Fetch CIBIL action may be offered. UX only —
   // the backend's requireSuperAdmin remains the authority.
@@ -685,7 +810,19 @@ export default function ApplicationView() {
 
           {/* ──── Applicant Section ──── */}
           <div ref={applicantRef} style={S.section}>
-            <h2 style={S.sectionHeading}>Applicant</h2>
+            <div style={S.sectionHeadRow}>
+              <h2 style={S.sectionHeading}>Applicant</h2>
+              {editParty !== "applicant" && (
+                <button
+                  type="button"
+                  style={S.cibilBtn}
+                  onClick={() => startEdit("applicant", applicantData)}
+                  disabled={Boolean(editParty)}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
             <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
 
             <div style={S.twoCol}>
@@ -726,8 +863,21 @@ export default function ApplicationView() {
                 </div>
               </div>
 
-              {/* RIGHT: Text details */}
+              {/* RIGHT: Text details — replaced by the editor while editing.
+                  The image column above is untouched either way, so no stored
+                  document is hidden by entering edit mode. */}
               <div style={S.colStack}>
+                {editParty === "applicant" ? (
+                  <PartyEditor
+                    role="applicant"
+                    form={editForm}
+                    onField={onEditField}
+                    onSave={saveParty}
+                    onCancel={cancelEdit}
+                    saving={editSaving}
+                  />
+                ) : (
+                <>
                 <FieldPair label="Name" value={fullName(applicantData)} />
                 <FieldPair label="Mobile Number" value={applicantData?.mobileNumber || applicantData?.mobile} />
                 <FieldPair label="Email" value={applicantData?.email} />
@@ -746,6 +896,8 @@ export default function ApplicationView() {
 
                 <FieldPair label="PAN No" value={applicantData?.panNo} />
                 <FieldPair label="Address" value={applicantData?.address} />
+                </>
+                )}
               </div>
             </div>
           </div>
@@ -761,11 +913,30 @@ export default function ApplicationView() {
             onDownloadJson={handleDownloadJson}
             onViewPdf={handleViewPdf}
             onDownloadPdf={handleDownloadPdf}
+            // Offered only while no report exists yet, mirroring the
+            // co-applicant rule — a stored report is re-read, never re-bought.
+            canFetch={admin?.role === "superadmin" && !applicantCibil.available}
+            fetchBusy={appFetchBusy}
+            onFetch={() => setShowAppFetchConfirm(true)}
           />
 
           {/* ──── Co-Applicant Section ──── */}
           <div ref={coApplicantRef} style={S.section}>
-            <h2 style={S.sectionHeading}>Co-Applicant</h2>
+            <div style={S.sectionHeadRow}>
+              <h2 style={S.sectionHeading}>Co-Applicant</h2>
+              {/* No co-applicant → no Edit button, so the existing empty state
+                  is preserved and one cannot be created by accident. */}
+              {hasCoApplicant && editParty !== "coApplicant" && (
+                <button
+                  type="button"
+                  style={S.cibilBtn}
+                  onClick={() => startEdit("coApplicant", app?.coApplicant)}
+                  disabled={Boolean(editParty)}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
             <div style={S.sectionDividerWrap}><hr style={S.sectionDivider} /><hr style={S.sectionDivider} /></div>
 
             <div style={S.twoCol}>
@@ -826,6 +997,17 @@ export default function ApplicationView() {
 
               {/* RIGHT: Text details */}
               <div style={S.colStack}>
+                {editParty === "coApplicant" ? (
+                  <PartyEditor
+                    role="coApplicant"
+                    form={editForm}
+                    onField={onEditField}
+                    onSave={saveParty}
+                    onCancel={cancelEdit}
+                    saving={editSaving}
+                  />
+                ) : (
+                <>
                 <FieldPair label="Name" value={app?.coApplicant?.name} />
                 <FieldPair label="Mobile Number" value={app?.coApplicant?.mobileNumber || app?.coApplicant?.mobile} />
                 <FieldPair label="Email" value={app?.coApplicant?.email} />
@@ -839,6 +1021,8 @@ export default function ApplicationView() {
                 <FieldPair label="Post Office" value={app?.coApplicant?.postOffice} />
                 <FieldPair label="Relation" value={app?.coApplicant?.relation} />
                 <FieldPair label="Document Type" value={app?.coApplicant?.documentType} />
+                </>
+                )}
               </div>
             </div>
           </div>
@@ -1100,6 +1284,56 @@ export default function ApplicationView() {
       {/* Co-applicant CIBIL confirmation. A bureau pull is billable and cannot
           be undone, so the cost is stated plainly before the request is made.
           Uses the page's existing overlay/modal pattern rather than confirm(). */}
+      {showAppFetchConfirm && (
+        <div style={S.cnOverlay} onClick={() => setShowAppFetchConfirm(false)}>
+          <div
+            style={{ ...S.cnModal, maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="app-cibil-confirm-title"
+          >
+            <div style={S.cnHeader}>
+              <h2 style={S.cnTitle} id="app-cibil-confirm-title">Fetch Applicant CIBIL?</h2>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setShowAppFetchConfirm(false)}
+                style={S.cnClose}
+              >
+                ×
+              </button>
+            </div>
+            <div style={S.cnBody}>
+              <p style={{ margin: "0 0 10px", lineHeight: 1.55 }}>
+                This will request a new CIBIL report for the <b>applicant</b> on{" "}
+                <b>{app?.formId || app?._id}</b>, using the currently saved applicant details.
+              </p>
+              <p style={{ margin: "0 0 10px", lineHeight: 1.55, color: "#B45309", fontWeight: 600 }}>
+                A bureau request may incur a CIBIL/vendor charge. Only perform it when
+                the applicant's credit report is actually required.
+              </p>
+              <p style={{ margin: 0, lineHeight: 1.55, color: "#6B7280", fontSize: 13.5 }}>
+                An existing stored report is never deleted or replaced by this action.
+              </p>
+            </div>
+            <div style={S.cnActions}>
+              <button type="button" style={S.cibilBtn} onClick={() => setShowAppFetchConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...S.cibilBtnPrimary, ...(appFetchBusy ? S.cibilBtnBusy : null) }}
+                onClick={handleApplicantFetch}
+                disabled={appFetchBusy}
+              >
+                {appFetchBusy ? "Fetching…" : "Fetch CIBIL"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCoFetchConfirm && (
         <div style={S.cnOverlay} onClick={() => setShowCoFetchConfirm(false)}>
           <div
@@ -1284,6 +1518,95 @@ function CibilBlock({
 }
 
 /* ═══════════ Reusable FieldPair Component ═══════════ */
+/** A stored DOB (ISO timestamp) as the yyyy-mm-dd an <input type="date"> wants. */
+function toDateInput(value) {
+  if (!value) return "";
+  const m = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+/**
+ * The editable detail fields, mirroring exactly what each section displays in
+ * read mode. The co-applicant carries five more because its card shows them.
+ *
+ * SURNAME IS OPTIONAL for both parties — the label says so, and nothing here
+ * marks it required. First name is the only required part.
+ */
+const PARTY_FIELDS = {
+  applicant: [
+    { key: "firstName", label: "First Name", required: true },
+    { key: "surname", label: "Surname (optional)" },
+    { key: "mobileNumber", label: "Mobile Number" },
+    { key: "email", label: "Email", type: "email" },
+    { key: "gender", label: "Gender" },
+    { key: "fatherName", label: "Father's Name" },
+    { key: "dateOfBirth", label: "Date of Birth", type: "date" },
+    { key: "aadharNo", label: "Aadhaar Number" },
+    { key: "panNo", label: "PAN No" },
+    { key: "address", label: "Address", wide: true },
+  ],
+  coApplicant: [
+    { key: "firstName", label: "First Name", required: true },
+    { key: "surname", label: "Surname (optional)" },
+    { key: "mobileNumber", label: "Mobile Number" },
+    { key: "email", label: "Email", type: "email" },
+    { key: "gender", label: "Gender" },
+    { key: "fatherName", label: "Father's Name" },
+    { key: "dateOfBirth", label: "Date of Birth", type: "date" },
+    { key: "aadharNo", label: "Aadhaar Number" },
+    { key: "panNo", label: "PAN No" },
+    { key: "relation", label: "Relation" },
+    { key: "documentType", label: "Document Type" },
+    { key: "pincode", label: "Pincode" },
+    { key: "policeStation", label: "Police Station" },
+    { key: "postOffice", label: "Post Office" },
+    { key: "address", label: "Address", wide: true },
+  ],
+};
+
+/**
+ * Edit form for one party. Deliberately plain: the same label styling as read
+ * mode, so switching modes changes the control and nothing else. Images are not
+ * included — they belong to the document/upload flow and keep their own UI.
+ */
+function PartyEditor({ role, form, onField, onSave, onCancel, saving }) {
+  return (
+    <div style={S.editWrap}>
+      <div style={S.editGrid}>
+        {(PARTY_FIELDS[role] || []).map((f) => (
+          <div key={f.key} style={f.wide ? S.editCellWide : undefined}>
+            <div style={S.fieldLabel}>
+              <b>{f.label}{f.required ? " *" : ""}</b>
+            </div>
+            <input
+              style={S.editInput}
+              type={f.type || "text"}
+              value={form[f.key] ?? ""}
+              disabled={saving}
+              onChange={(e) => onField(f.key, e.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={S.editActions}>
+        <button type="button" style={S.cibilBtn} onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          style={{ ...S.cibilBtnPrimary, ...(saving ? S.cibilBtnBusy : null) }}
+          onClick={onSave}
+          disabled={saving}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FieldPair({ label, value }) {
   return (
     <div>
@@ -1492,6 +1815,23 @@ const S = {
     border: "1px solid #B45309", background: "#B45309", marginLeft: "auto",
   },
   cibilBtnBusy: { opacity: 0.7, cursor: "progress" },
+  /* -- Applicant / Co-Applicant inline edit -- */
+  // The heading keeps its existing style; the row only puts the Edit button
+  // on the same baseline, so the section header is unchanged visually.
+  sectionHeadRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+  },
+  editWrap: { display: "flex", flexDirection: "column", gap: 14 },
+  editGrid: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12,
+  },
+  editCellWide: { gridColumn: "1 / -1" },
+  editInput: {
+    width: "100%", boxSizing: "border-box", marginTop: 4,
+    padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1",
+    fontSize: 14, color: "#0B1F4D", background: "#fff",
+  },
+  editActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
   // Modal footer: same spacing as the page's other dialog actions.
   cnActions: {
     display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18,
