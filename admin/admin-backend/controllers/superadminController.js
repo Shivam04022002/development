@@ -448,14 +448,67 @@ export const getAdminActivity = async (req, res) => {
   }
 };
 
-// Helper to atomically get the next UserId number
+/**
+ * Which unique index did MongoDB actually reject?
+ *
+ * Every duplicate-key error used to be reported as "Email already exists",
+ * whichever index raised it. `users` carries TWO non-sparse unique indexes —
+ * `email_1` and `UserId_1` — so a UserId collision was announced as an email
+ * conflict, and the operator went looking for a dealer that did not exist.
+ *
+ * `keyPattern` names the offending index; `keyValue` is a fallback for driver
+ * versions that omit it. The value itself is never echoed back.
+ */
+const DUPLICATE_FIELD_LABELS = {
+  email: "Email already exists",
+  UserId: "User ID already exists",
+  mobileNumber: "Mobile number already exists",
+};
+
+export const duplicateKeyMessage = (err) => {
+  const field =
+    Object.keys(err?.keyPattern || {})[0] ||
+    Object.keys(err?.keyValue || {})[0] ||
+    "";
+  return DUPLICATE_FIELD_LABELS[field] || (field ? `Duplicate ${field}` : "Duplicate value");
+};
+
+/**
+ * The next free UserId, in the existing `SurjitFin#N` format.
+ *
+ * The counter alone is not trustworthy: production reached seq 24 while 227
+ * dealers existed with ids up to SurjitFin#99, because bulk/imported dealers
+ * never advanced it. Every create then minted an id that was already taken and
+ * died on the UserId_1 unique index.
+ *
+ * So the counter still allocates — it stays the fast path and keeps ids roughly
+ * sequential — but the result is checked before it is used, and the counter is
+ * advanced again until a free id appears. A drifted counter now costs a few
+ * extra reads instead of making dealer creation impossible.
+ *
+ * The unique index remains the real arbiter: two concurrent callers can still
+ * race, and the loser gets E11000, which is now reported accurately.
+ */
+const MAX_USER_ID_ATTEMPTS = 200;
+
 const getNextUserId = async () => {
-  const counter = await Counter.findByIdAndUpdate(
-    { _id: 'userId' },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true } // Auto-creates if missing
+  let lastCandidate = "";
+  for (let attempt = 0; attempt < MAX_USER_ID_ATTEMPTS; attempt++) {
+    const counter = await Counter.findByIdAndUpdate(
+      { _id: 'userId' },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true } // Auto-creates if missing
+    );
+    lastCandidate = `SurjitFin#${counter.seq}`;
+    const taken = await User.exists({ UserId: lastCandidate });
+    if (!taken) return lastCandidate;
+  }
+  // 200 consecutive collisions means the counter is not merely behind — stop
+  // rather than spin, and say what to correct.
+  throw new Error(
+    `Could not allocate a free UserId after ${MAX_USER_ID_ATTEMPTS} attempts ` +
+    `(last tried ${lastCandidate}). The userId counter is far behind the users collection.`
   );
-  return `SurjitFin#${counter.seq}`;
 };
 
 export const createDealer = async (req, res) => {
@@ -466,10 +519,15 @@ export const createDealer = async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    // Check if email already exists
+    // Check if email already exists.
+    //
+    // Same wording as the E11000 branch below, because both mean the same thing
+    // to the operator: this email is taken. They previously disagreed ("in use"
+    // here, "already exists" there), so the message depended on which guard
+    // happened to fire first.
     const exists = await User.findOne({ email });
     if (exists) {
-      return res.status(409).json({ message: "Email already in use" });
+      return res.status(409).json({ message: "Email already exists" });
     }
 
     // Auto-generate unique UserId atomically
@@ -500,7 +558,7 @@ export const createDealer = async (req, res) => {
   } catch (err) {
     console.error("createDealer:", err);
     if (err.code === 11000) {
-      return res.status(409).json({ message: "Email already exists" });
+      return res.status(409).json({ message: duplicateKeyMessage(err) });
     }
     return res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -652,11 +710,12 @@ export const updateDealer = async (req, res) => {
     const dealer = await User.findById(id);
     if (!dealer) return res.status(404).json({ message: "Dealer not found" });
 
-    // Check if email is being changed and if it already exists
+    // Check if email is being changed and if it already exists.
+    // Wording kept identical to the E11000 branch below, as in createDealer.
     if (email && email !== dealer.email) {
       const exists = await User.findOne({ email });
       if (exists) {
-        return res.status(409).json({ message: "Email already in use" });
+        return res.status(409).json({ message: "Email already exists" });
       }
       dealer.email = email;
     }
@@ -691,7 +750,7 @@ export const updateDealer = async (req, res) => {
   } catch (err) {
     console.error("updateDealer:", err);
     if (err.code === 11000) {
-      return res.status(409).json({ message: "Email already exists" });
+      return res.status(409).json({ message: duplicateKeyMessage(err) });
     }
     return res.status(500).json({ message: "Server error", error: err.message });
   }
