@@ -27,12 +27,23 @@ echo "[deploy] mobile-backend deps"
 echo "[deploy] admin-frontend build"
 ( cd admin/admin-frontend && npm ci && npm run build )
 
-# 4) Reload under PM2 (zero-downtime).
+# 4) Publish the built frontend to the Nginx web root.
+#
+# The build above only produces admin/admin-frontend/dist/. Nginx serves the
+# SPA from /var/www/dealeradmin, and nothing copied one to the other, so a
+# deploy would rebuild the frontend and still leave the live site on the
+# previous bundle. This is the step that actually releases the UI.
+# --delete keeps the web root an exact mirror of the build so superseded
+# hashed assets do not accumulate.
+echo "[deploy] publishing frontend"
+rsync -a --delete admin/admin-frontend/dist/ /var/www/dealeradmin/
+
+# 5) Reload under PM2 (zero-downtime).
 echo "[deploy] reloading PM2"
 pm2 reload ecosystem.config.cjs --env production || pm2 start ecosystem.config.cjs --env production
 pm2 save
 
-# 5) Verify.
+# 6) Verify.
 echo "[deploy] healthcheck"
 sleep 3
 ./scripts/healthcheck.sh || { echo "[deploy] HEALTHCHECK FAILED — consider ./scripts/rollback.sh"; exit 1; }
