@@ -36,7 +36,7 @@ echo "[deploy] admin-frontend build"
 # --delete keeps the web root an exact mirror of the build so superseded
 # hashed assets do not accumulate.
 echo "[deploy] publishing frontend"
-rsync -a --delete admin/admin-frontend/dist/ /var/www/dealeradmin/
+sudo -u www-data rsync -a --delete admin/admin-frontend/dist/ /var/www/dealeradmin/
 
 # 5) Reload under PM2 (zero-downtime).
 echo "[deploy] reloading PM2"
