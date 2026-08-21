@@ -4,6 +4,11 @@
 // and Excel export. Built entirely on existing backend endpoints
 // (/workflow/dashboard-stats + the list endpoints). No business logic here.
 //
+// The presentation follows the Applications page's design language (the same
+// surfaces, pills, inputs and shadows as Dashboard.jsx) so the two read as one
+// product. Data, endpoints, date-filter behaviour and every calculation are
+// untouched — this file's logic half is identical to what it always was.
+//
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
@@ -12,6 +17,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import API from "../services/api";
+import logo from "../assets/logo-surjit.png";
 
 const BRAND = { blue: "#0B1F4D", orange: "#F59E0B", green: "#16A34A", red: "#EF4444", cyan: "#0E7490" };
 
@@ -92,6 +98,65 @@ const EXPORTS = [
   ["Low CIBIL", () => fetchAll("/workflow/applications/rejected", { reason: "low_cibil" })],
 ];
 
+const DATE_FILTERS = [
+  ["today", "Today"], ["yesterday", "Yesterday"], ["week", "This Week"],
+  ["month", "This Month"], ["all", "All Time"], ["custom", "Custom"],
+];
+
+// ── Presentation-only formatting ─────────────────────────────────────────────
+// The API returns `date` as "YYYY-MM-DD" and `month` as "YYYY-MM" (fillDaily /
+// fillMonthly). These shorten the tick text so 30 days of labels fit; anything
+// not matching the expected shape is passed straight through untouched.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayTick = (v) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}` : String(v);
+};
+const dayFull = (v) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(v);
+};
+const monthTick = (v) => {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v));
+  return m ? `${MONTHS[Number(m[2]) - 1]} '${m[1].slice(2)}` : String(v);
+};
+const monthFull = (v) => {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v));
+  return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(v);
+};
+const num = (v) => (typeof v === "number" ? v.toLocaleString() : v);
+
+// ── Shared chart chrome ──────────────────────────────────────────────────────
+// Solid hairline grid (never dashed), recessive axes, one tooltip style. Kept
+// in one place so all five charts read as the same instrument.
+const AXIS_TICK = { fontSize: 11, fill: "#94A3B8", fontWeight: 500 };
+const GRID = { stroke: "#EEF2F7", strokeWidth: 1, vertical: false };
+const TOOLTIP = {
+  contentStyle: {
+    background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10,
+    boxShadow: "0 8px 24px rgba(11,31,77,0.12)", fontSize: 12, padding: "8px 12px",
+  },
+  labelStyle: { color: "#6B7280", fontWeight: 600, fontSize: 11, marginBottom: 4 },
+  itemStyle: { color: "#111827", fontWeight: 700, fontSize: 13, padding: 0 },
+};
+const BAR_CURSOR = { fill: "rgba(11,31,77,0.05)" };
+const LINE_CURSOR = { stroke: "#CBD5E1", strokeWidth: 1 };
+
+/** A chart panel: heading, optional subtitle, fixed-height plot area. */
+function ChartCard({ title, subtitle, wide, empty, dim, children }) {
+  return (
+    <section className={`an-chart${wide ? " an-chart--wide" : ""}`}>
+      <header className="an-chart-head">
+        <h3 className="an-chart-title">{title}</h3>
+        {subtitle ? <span className="an-chart-sub">{subtitle}</span> : null}
+      </header>
+      <div className={`an-chart-body${wide ? " an-chart-body--wide" : ""}`} style={{ opacity: dim ? 0.5 : 1 }}>
+        {empty ? <div className="an-empty">No data for this range</div> : children}
+      </div>
+    </section>
+  );
+}
+
 export default function AdminAnalytics() {
   const navigate = useNavigate();
   const [filterKey, setFilterKey] = useState("all");
@@ -140,109 +205,416 @@ export default function AdminAnalytics() {
     }
   };
 
-  const chartCard = { background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: 18 };
+  /* A refetch holds the previous render at reduced opacity rather than blanking
+     to a skeleton, so the numbers never jump about while a range is applied.
+     Only the very first load has nothing to hold. */
+  const firstLoad = loading && !stats;
+  const dim = loading && !!stats;
+
+  /* Presentational restatement of the filter that is already applied — the
+     same affordance the Super Admin stats tab carries. It reads the existing
+     presetRange(); it does not compute or request anything. */
+  const rangeText = (() => {
+    const r = filterKey === "custom" ? custom : presetRange(filterKey);
+    if (!r.from && !r.to) return "All time";
+    const d = (s) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
+      return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(s);
+    };
+    if (r.from && r.to) return r.from === r.to ? d(r.from) : `${d(r.from)} → ${d(r.to)}`;
+    return r.from ? `From ${d(r.from)}` : `Until ${d(r.to)}`;
+  })();
+
+  const decided = (avr.approved || 0) + (avr.rejected || 0);
 
   return (
-    <div style={{ background: "#F8FAFC", minHeight: "100vh", padding: "22px 0" }}>
-      <div style={{ maxWidth: 1240, margin: "0 auto", padding: "0 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-          <h2 style={{ color: BRAND.blue, fontWeight: 800, margin: 0 }}>Dashboard Analytics</h2>
-          <button className="btn btn-outline-secondary" onClick={() => navigate("/dashboard")}>← Dashboard</button>
+    <div className="an-page">
+      <style>{`
+        .an-page { background: #F8FAFC; min-height: 100vh; padding: 18px 0 40px; }
+        .an-wrap { max-width: 1360px; margin: 0 auto; padding: 0 18px; }
+
+        /* ── surfaces ── */
+        .an-surface {
+          background: #fff; border: 1px solid #E5E7EB; border-radius: 14px;
+          box-shadow: 0 2px 10px rgba(11,31,77,0.06);
+        }
+
+        /* ── top bar — mirrors the Applications top bar ── */
+        .an-topbar {
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 12px; padding: 12px 18px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .an-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .an-brand img { height: 38px; }
+        .an-divider { height: 28px; width: 1px; background: #E5E7EB; }
+        .an-title { font-size: 15px; font-weight: 800; color: #0B1F4D; line-height: 1.2; }
+        .an-subtitle { font-size: 11px; color: #6B7280; font-weight: 500; margin-top: 2px; }
+
+        /* ── controls (shared with the Applications page) ── */
+        .an-btn {
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 7px 14px; border-radius: 9px; font-size: 13px; font-weight: 700;
+          cursor: pointer; border: 1.5px solid transparent; font-family: inherit;
+          transition: opacity 0.15s, transform 0.15s, background 0.15s;
+        }
+        .an-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+        .an-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .an-btn-primary { background: #0B1F4D; color: #fff; border-color: #0B1F4D; }
+        .an-btn-ghost { background: #fff; color: #374151; border-color: #E5E7EB; }
+        .an-btn-ghost:hover:not(:disabled) { background: #F8FAFC; }
+        .an-btn-green { background: #ECFDF5; color: #065F46; border-color: #D1FAE5; }
+        .an-input {
+          border: 1.5px solid #E5E7EB; border-radius: 10px; padding: 7px 11px;
+          font-size: 13px; font-weight: 500; background: #fff; outline: none;
+          color: #111827; font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .an-input:focus { border-color: #0B1F4D; box-shadow: 0 0 0 3px rgba(11,31,77,0.08); }
+
+        /* ── filter row — one row, above everything it scopes ── */
+        .an-filters { padding: 14px 18px; margin-bottom: 16px; }
+        .an-filters-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .an-filters-label {
+          font-size: 11px; font-weight: 700; color: #64748B;
+          text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px;
+        }
+        .an-pill {
+          padding: 7px 15px; border-radius: 10px; font-weight: 700; font-size: 13px;
+          border: 1.5px solid #E5E7EB; background: #F8FAFC; color: #6B7280;
+          cursor: pointer; transition: all 0.15s; font-family: inherit; white-space: nowrap;
+        }
+        .an-pill:hover { background: #F1F5F9; color: #374151; }
+        .an-pill.is-active {
+          background: #0B1F4D; color: #fff; border-color: #0B1F4D;
+        }
+        .an-pill.is-active:hover { background: #0B1F4D; color: #fff; }
+        .an-custom {
+          display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+          padding-left: 10px; margin-left: 2px; border-left: 1px solid #E5E7EB;
+        }
+        .an-arrow { color: #94A3B8; font-weight: 700; }
+        .an-range-badge {
+          margin-left: auto; font-size: 12px; font-weight: 700; color: #0B1F4D;
+          background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 999px;
+          padding: 5px 12px; white-space: nowrap;
+        }
+
+        /* ── KPI tiles ── */
+        .an-kpis {
+          display: grid; grid-template-columns: repeat(5, 1fr);
+          gap: 12px; margin-bottom: 18px;
+        }
+        .an-kpi {
+          background: #fff; border: 1px solid #E5E7EB; border-radius: 14px;
+          box-shadow: 0 2px 10px rgba(11,31,77,0.06);
+          padding: 14px 16px 12px; display: flex; flex-direction: column;
+          justify-content: space-between; min-height: 104px;
+          transition: box-shadow 0.15s, transform 0.15s;
+        }
+        .an-kpi:hover { box-shadow: 0 6px 18px rgba(11,31,77,0.10); transform: translateY(-1px); }
+        .an-kpi-label {
+          font-size: 11px; font-weight: 700; color: #64748B;
+          text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.35;
+        }
+        .an-kpi-value {
+          font-size: 30px; font-weight: 800; line-height: 1; margin-top: 10px;
+        }
+        .an-kpi-rule { height: 3px; border-radius: 99px; margin-top: 10px; opacity: 0.45; }
+        .an-kpi--hero { grid-column: span 2; }
+        .an-kpi--hero .an-kpi-value { font-size: 44px; }
+
+        /* ── chart grid ── */
+        .an-charts {
+          display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px; margin-bottom: 18px;
+        }
+        .an-chart {
+          background: #fff; border: 1px solid #E5E7EB; border-radius: 14px;
+          box-shadow: 0 2px 10px rgba(11,31,77,0.06);
+          padding: 16px 18px 12px; min-width: 0;
+        }
+        .an-chart--wide { grid-column: 1 / -1; }
+        .an-chart-head {
+          display: flex; align-items: baseline; justify-content: space-between;
+          gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+        }
+        .an-chart-title { font-size: 14px; font-weight: 800; color: #0B1F4D; margin: 0; letter-spacing: -0.1px; }
+        .an-chart-sub { font-size: 11px; color: #94A3B8; font-weight: 600; }
+        /* The body height includes the x-axis band, so no axis is ever cut off
+           and no card grows its own nested scrollbar. */
+        .an-chart-body { height: 280px; position: relative; transition: opacity 0.2s; }
+        .an-chart-body--wide { height: 340px; }
+        .an-empty {
+          height: 100%; display: flex; align-items: center; justify-content: center;
+          color: #94A3B8; font-size: 13px; font-weight: 600;
+        }
+        .an-donut-centre {
+          position: absolute; top: 44%; left: 0; right: 0;
+          text-align: center; pointer-events: none;
+        }
+        .an-donut-total { font-size: 26px; font-weight: 800; color: #0B1F4D; line-height: 1; }
+        .an-donut-cap {
+          font-size: 10px; font-weight: 700; color: #94A3B8;
+          text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px;
+        }
+
+        /* ── export ── */
+        .an-export { padding: 16px 18px; }
+        .an-export-title { font-size: 14px; font-weight: 800; color: #0B1F4D; margin: 0 0 4px; }
+        .an-export-sub { font-size: 11px; color: #94A3B8; font-weight: 600; margin-bottom: 12px; }
+        .an-export-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        /* ── responsive ── */
+        @media (max-width: 1180px) {
+          .an-kpis { grid-template-columns: repeat(4, 1fr); }
+        }
+        @media (max-width: 980px) {
+          .an-charts { grid-template-columns: minmax(0, 1fr); }
+          .an-chart--wide { grid-column: auto; }
+          .an-chart-body--wide { height: 300px; }
+          .an-kpis { grid-template-columns: repeat(3, 1fr); }
+          .an-range-badge { margin-left: 0; }
+        }
+        @media (max-width: 720px) {
+          .an-wrap { padding: 0 12px; }
+          .an-kpis { grid-template-columns: repeat(2, 1fr); }
+          .an-kpi--hero { grid-column: span 2; }
+          .an-kpi-value { font-size: 26px; }
+          .an-kpi--hero .an-kpi-value { font-size: 34px; }
+          .an-chart-body, .an-chart-body--wide { height: 260px; }
+          .an-topbar { align-items: flex-start; }
+        }
+        @media (max-width: 460px) {
+          .an-kpis { grid-template-columns: minmax(0, 1fr); }
+          .an-kpi--hero { grid-column: auto; }
+          .an-custom { padding-left: 0; margin-left: 0; border-left: none; width: 100%; }
+          .an-brand img { height: 30px; }
+        }
+      `}</style>
+
+      <div className="an-wrap">
+
+        {/* ══ Top bar ══ */}
+        <header className="an-surface an-topbar">
+          <div className="an-brand">
+            <img src={logo} alt="Surjit Finance" />
+            <div className="an-divider" />
+            <div>
+              <div className="an-title">Dashboard Analytics</div>
+              <div className="an-subtitle">{rangeText}</div>
+            </div>
+          </div>
+          <button className="an-btn an-btn-ghost" onClick={() => navigate("/dashboard")}>
+            ← Dashboard
+          </button>
+        </header>
+
+        {/* ══ Date filters — one row, scoping everything below ══ */}
+        <div className="an-surface an-filters">
+          <div className="an-filters-row">
+            <span className="an-filters-label">Date range</span>
+            {DATE_FILTERS.map(([k, label]) => (
+              <button
+                key={k}
+                className={`an-pill${filterKey === k ? " is-active" : ""}`}
+                aria-pressed={filterKey === k}
+                onClick={() => setFilterKey(k)}
+              >
+                {label}
+              </button>
+            ))}
+            {filterKey === "custom" && (
+              <span className="an-custom">
+                <input
+                  type="date" className="an-input" aria-label="From date"
+                  value={custom.from}
+                  onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
+                />
+                <span className="an-arrow">→</span>
+                <input
+                  type="date" className="an-input" aria-label="To date"
+                  value={custom.to}
+                  onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
+                />
+                <button className="an-btn an-btn-primary" onClick={load}>Apply</button>
+              </span>
+            )}
+            <span className="an-range-badge">{loading ? "Loading…" : rangeText}</span>
+          </div>
         </div>
 
-        {/* Date filters */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
-          {[["today", "Today"], ["yesterday", "Yesterday"], ["week", "This Week"], ["month", "This Month"], ["all", "All Time"], ["custom", "Custom"]].map(([k, label]) => (
-            <button key={k} className={`btn btn-sm ${filterKey === k ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setFilterKey(k)}>
-              {label}
-            </button>
-          ))}
-          {filterKey === "custom" && (
-            <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-              <input type="date" className="form-control form-control-sm" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
-              <span>→</span>
-              <input type="date" className="form-control form-control-sm" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
-              <button className="btn btn-sm btn-primary" onClick={load}>Apply</button>
-            </span>
-          )}
-        </div>
-
-        {/* Cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
-          {CARD_DEFS.map(([key, label, color]) => (
-            <div key={key} style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, padding: "16px 18px" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-              <div style={{ fontSize: 30, fontWeight: 800, color, marginTop: 6 }}>{loading ? "…" : (cards[key] ?? 0)}</div>
+        {/* ══ KPI tiles ══ */}
+        <div className="an-kpis" style={{ opacity: dim ? 0.55 : 1, transition: "opacity 0.2s" }}>
+          {CARD_DEFS.map(([key, label, color], i) => (
+            <div key={key} className={`an-kpi${i === 0 ? " an-kpi--hero" : ""}`}>
+              <div className="an-kpi-label">{label}</div>
+              <div>
+                <div className="an-kpi-value" style={{ color }}>
+                  {firstLoad ? "—" : num(cards[key] ?? 0)}
+                </div>
+                <div className="an-kpi-rule" style={{ background: color }} />
+              </div>
             </div>
           ))}
         </div>
 
-        {/* Charts */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16, marginBottom: 22 }}>
-          <div style={chartCard}>
-            <h6 style={{ fontWeight: 700, color: BRAND.blue }}>Workflow Distribution</h6>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={dist} margin={{ top: 10, right: 10, left: -10, bottom: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={70} tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} /><Tooltip />
-                <Bar dataKey="count" fill={BRAND.blue} radius={[4, 4, 0, 0]} />
+        {/* ══ Charts ══ */}
+        <div className="an-charts">
+
+          {/* Full width: ten stage labels need the room to stay readable.
+              One series → one colour for every bar (never a hue per stage:
+              the ten stage accents are tile identifiers, not a validated
+              categorical chart palette). */}
+          <ChartCard
+            title="Workflow Distribution"
+            subtitle="Applications by stage"
+            wide
+            dim={dim}
+            empty={!firstLoad && dist.length === 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dist} margin={{ top: 8, right: 8, left: -14, bottom: 62 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis
+                  dataKey="name" angle={-32} textAnchor="end" interval={0}
+                  height={72} tick={AXIS_TICK} axisLine={false} tickLine={false}
+                />
+                <YAxis allowDecimals={false} tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} />
+                <Tooltip {...TOOLTIP} cursor={BAR_CURSOR} formatter={(v) => [num(v), "Applications"]} />
+                <Bar dataKey="count" fill={BRAND.blue} radius={[4, 4, 0, 0]} maxBarSize={24} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </ChartCard>
 
-          <div style={chartCard}>
-            <h6 style={{ fontWeight: 700, color: BRAND.blue }}>Approval vs Rejection</h6>
-            <ResponsiveContainer width="100%" height={260}>
+          {/* Approved / Rejected are STATUS colours, not a categorical pair:
+              green↔red measures ΔE 3.7 under deuteranopia, so colour alone
+              could never carry identity here. The legend names each slice and
+              carries its value, the whole sits in the centre, and a 2px surface
+              gap separates the arcs — the reading never depends on the hue. */}
+          <ChartCard
+            title="Approval vs Rejection"
+            subtitle="Share of decided applications"
+            dim={dim}
+            empty={!firstLoad && decided === 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={avrData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
-                  {avrData.map((e, i) => <Cell key={i} fill={PIE_COLORS[i]} />)}
+                <Pie
+                  data={avrData} dataKey="value" nameKey="name"
+                  cx="50%" cy="46%" innerRadius={58} outerRadius={92}
+                  paddingAngle={2} stroke="#fff" strokeWidth={2}
+                >
+                  {avrData.map((e, i) => <Cell key={e.name} fill={PIE_COLORS[i]} />)}
                 </Pie>
-                <Legend /><Tooltip />
+                <Tooltip {...TOOLTIP} formatter={(v, n) => [num(v), n]} />
+                <Legend
+                  verticalAlign="bottom" height={28} iconType="circle" iconSize={9}
+                  formatter={(value) => (
+                    <span style={{ color: "#374151", fontSize: 12, fontWeight: 600 }}>
+                      {value} — {num(avrData.find((d) => d.name === value)?.value ?? 0)}
+                    </span>
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
-          </div>
+            <div className="an-donut-centre">
+              <div className="an-donut-total">{firstLoad ? "—" : num(decided)}</div>
+              <div className="an-donut-cap">Decided</div>
+            </div>
+          </ChartCard>
 
-          <div style={chartCard}>
-            <h6 style={{ fontWeight: 700, color: BRAND.blue }}>Daily Applications (30d)</h6>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={daily} margin={{ top: 10, right: 10, left: -10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 10 }} interval={4} /><YAxis allowDecimals={false} /><Tooltip />
-                <Line type="monotone" dataKey="count" stroke={BRAND.orange} strokeWidth={2} dot={false} />
+          <ChartCard
+            title="Daily Applications"
+            subtitle="Last 30 days"
+            dim={dim}
+            empty={!firstLoad && daily.length === 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={daily} margin={{ top: 8, right: 12, left: -14, bottom: 4 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis
+                  dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false}
+                  tickFormatter={dayTick} interval="preserveStartEnd" minTickGap={28}
+                />
+                <YAxis allowDecimals={false} tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} />
+                <Tooltip
+                  {...TOOLTIP} cursor={LINE_CURSOR}
+                  labelFormatter={dayFull} formatter={(v) => [num(v), "Applications"]}
+                />
+                <Line
+                  type="monotone" dataKey="count" stroke={BRAND.orange} strokeWidth={2}
+                  dot={false} activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                />
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          </ChartCard>
 
-          <div style={chartCard}>
-            <h6 style={{ fontWeight: 700, color: BRAND.blue }}>Monthly Applications (12m)</h6>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={monthly} margin={{ top: 10, right: 10, left: -10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="month" tick={{ fontSize: 10 }} /><YAxis allowDecimals={false} /><Tooltip />
-                <Bar dataKey="count" fill={BRAND.green} radius={[4, 4, 0, 0]} />
+          <ChartCard
+            title="Monthly Applications"
+            subtitle="Last 12 months"
+            dim={dim}
+            empty={!firstLoad && monthly.length === 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthly} margin={{ top: 8, right: 8, left: -14, bottom: 4 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis
+                  dataKey="month" tick={AXIS_TICK} axisLine={false} tickLine={false}
+                  tickFormatter={monthTick} interval="preserveStartEnd" minTickGap={12}
+                />
+                <YAxis allowDecimals={false} tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} />
+                <Tooltip
+                  {...TOOLTIP} cursor={BAR_CURSOR}
+                  labelFormatter={monthFull} formatter={(v) => [num(v), "Applications"]}
+                />
+                <Bar dataKey="count" fill={BRAND.green} radius={[4, 4, 0, 0]} maxBarSize={24} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </ChartCard>
 
-          <div style={chartCard}>
-            <h6 style={{ fontWeight: 700, color: BRAND.blue }}>Low CIBIL Trend (30d)</h6>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={lowTrend} margin={{ top: 10, right: 10, left: -10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 10 }} interval={4} /><YAxis allowDecimals={false} /><Tooltip />
-                <Line type="monotone" dataKey="count" stroke={BRAND.red} strokeWidth={2} dot={false} />
+          <ChartCard
+            title="Low CIBIL Trend"
+            subtitle="Rejections, last 30 days"
+            dim={dim}
+            empty={!firstLoad && lowTrend.length === 0}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={lowTrend} margin={{ top: 8, right: 12, left: -14, bottom: 4 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis
+                  dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false}
+                  tickFormatter={dayTick} interval="preserveStartEnd" minTickGap={28}
+                />
+                <YAxis allowDecimals={false} tick={AXIS_TICK} axisLine={false} tickLine={false} width={44} />
+                <Tooltip
+                  {...TOOLTIP} cursor={LINE_CURSOR}
+                  labelFormatter={dayFull} formatter={(v) => [num(v), "Rejections"]}
+                />
+                <Line
+                  type="monotone" dataKey="count" stroke={BRAND.red} strokeWidth={2}
+                  dot={false} activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                />
               </LineChart>
             </ResponsiveContainer>
-          </div>
+          </ChartCard>
         </div>
 
-        {/* Excel export */}
-        <div style={{ ...chartCard, marginBottom: 30 }}>
-          <h6 style={{ fontWeight: 700, color: BRAND.blue, marginBottom: 12 }}>Excel Export</h6>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {/* ══ Excel export ══ */}
+        <section className="an-surface an-export">
+          <h3 className="an-export-title">Excel Export</h3>
+          <div className="an-export-sub">Downloads the full record list for the selected set</div>
+          <div className="an-export-row">
             {EXPORTS.map(([label, fn]) => (
-              <button key={label} className="btn btn-sm btn-outline-success" disabled={!!exporting} onClick={() => doExport(label, fn)}>
+              <button
+                key={label}
+                className="an-btn an-btn-green"
+                disabled={!!exporting}
+                onClick={() => doExport(label, fn)}
+              >
                 {exporting === label ? "Exporting…" : `Export ${label}`}
               </button>
             ))}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

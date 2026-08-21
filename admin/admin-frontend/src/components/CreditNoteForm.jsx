@@ -3,9 +3,9 @@ import API from "../services/api";
 import { creditNoteFilename } from "../utils/reportFilename";
 
 /**
- * CreditNoteForm — the Credit Note step, extracted verbatim from
- * PendingCibilView so both that page and the Applicant Details page share one
- * implementation. No business logic is duplicated or changed here.
+ * CreditNoteForm — the Credit Note step, used by the Applicant Details page
+ * (ApplicationView), which is the single place an application is reviewed. No
+ * business logic is duplicated or changed here.
  *
  * The single existing endpoint POST /credit-notes/:applicationId performs the
  * whole step server-side: it saves the note, generates the PDF (returned as the
