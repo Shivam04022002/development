@@ -11,7 +11,6 @@ import RejectedApplicationView from "./pages/RejectedApplicationView";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import CibilSettings from "./pages/CibilSettings";
 import PendingCibil from "./pages/PendingCibil";
-import PendingCibilView from "./pages/PendingCibilView";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import CibilReportQA from "./pages/CibilReportQA";
 import CreditUnderwritingQA from "./pages/CreditUnderwritingQA";
@@ -40,7 +39,13 @@ const App = () => {
 
       {/*  Pending CIBIL (Phase 5A) — before Contact Creation in the pipeline */}
       <Route path="/pending-cibil" element={<PendingCibil />} />
-      <Route path="/pending-cibil/:id" element={<PendingCibilView />} />
+      {/* The Pending CIBIL detail view is the SAME full application UI the
+          Pending list opens (ApplicationView), so an application is reviewed
+          in one place regardless of which list it was opened from. The list
+          links to /application/:id; this route is kept so existing links and
+          bookmarks land on that same full view rather than a second, simpler
+          copy of it. */}
+      <Route path="/pending-cibil/:id" element={<ApplicationView />} />
 
       {/*  Pending Applications */}
       <Route path="/pending" element={<PendingFiles />} />
